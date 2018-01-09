@@ -1,0 +1,4 @@
+.vscode
+build/
+code_coverage.xml
+.DS_Store
