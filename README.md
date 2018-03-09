@@ -47,9 +47,26 @@ To port the library to a new platform, you need to implement the following inter
 ## Using the Library
 The example code below sends data to and receives data from HERE Tracking using the client interface.
 ```
-void my_data_cb(here_tracking_error err, const char* data, uint32_t data_size, void* cb_data)
+
+here_tracking_error my_send_cb(uint8_t** data, size_t* data_size, void* user_data)
 {
-  /* Handle received data here. */
+    /*
+     * Set the data buffer to send and it's size:
+     * *data = my_send_data;
+     * *data_size = my_send_data_size;
+     *
+     * When no more data to send set:
+     * *data = NULL;
+     * *data_size = 0;
+     */
+
+    return HERE_TRACKING_OK;
+}
+
+here_tracking_error my_recv_cb(const here_tracking_recv_data* data, void* user_data)
+{
+    /* Handle received data here. */
+    return HERE_TRACKING_OK;
 }
 
 int main(int argc, char** argv)
@@ -59,20 +76,16 @@ int main(int argc, char** argv)
   static const char* thing_id = "my-thing-id";
   static const char* thing_secret = "my-thing-secret";
   static const char* base_url = "tracking.api.here.com";
-  static char my_data_buffer[1024] = {0};
-  static const char* my_data = "my_data_to_send";
 
   err = here_tracking_init(&client, thing_id, thing_secret, base_url);
 
   if(err == HERE_TRACKING_OK)
   {
-    err = here_tracking_set_recv_data_cb(&client, my_data_cb, NULL);
-  }
-
-  if(err == HERE_TRACKING_OK)
-  {
-    memcpy(my_data_buffer, my_data, strlen(my_data));
-    err = here_tracking_send(&client, my_data_buffer, strlen(my_data), 1024);
+      err = here_tracking_send_stream(&client,
+                                      my_send_cb,
+                                      my_recv_cb,
+                                      HERE_TRACKING_RESP_WITH_DATA,
+                                      NULL);
   }
 
   return (err == HERE_TRACKING_OK) ? 0 : -1;

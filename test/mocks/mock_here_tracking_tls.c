@@ -35,6 +35,8 @@ static uint32_t mock_tls_read_result_chunk_count = 0;
 
 static uint32_t mock_tls_read_current_chunk = 0;
 
+static uint32_t mock_tls_read_current_chunk_offset = 0;
+
 /**************************************************************************************************/
 
 DEFINE_FAKE_VALUE_FUNC1(here_tracking_error, here_tracking_tls_init, here_tracking_tls*);
@@ -95,6 +97,7 @@ void mock_here_tracking_tls_read_set_result_data(const char** data,
     mock_tls_read_result_data_size = data_size;
     mock_tls_read_result_chunk_count = chunks;
     mock_tls_read_current_chunk = 0;
+    mock_tls_read_current_chunk_offset = 0;
 }
 
 /**************************************************************************************************/
@@ -107,11 +110,23 @@ here_tracking_error mock_here_tracking_tls_read_custom(here_tracking_tls tls,
     {
         if(mock_tls_read_current_chunk < mock_tls_read_result_chunk_count)
         {
-            memcpy(data,
-                   mock_tls_read_result_data[mock_tls_read_current_chunk],
-                   mock_tls_read_result_data_size[mock_tls_read_current_chunk]);
-            (*data_size) = mock_tls_read_result_data_size[mock_tls_read_current_chunk];
-            mock_tls_read_current_chunk++;
+            uint32_t data_in_chunk = mock_tls_read_result_data_size[mock_tls_read_current_chunk] -
+                                     mock_tls_read_current_chunk_offset;
+            const char* data_pos = (mock_tls_read_result_data[mock_tls_read_current_chunk]) +
+                                   mock_tls_read_current_chunk_offset;
+
+            if(data_in_chunk > (*data_size))
+            {
+                memcpy(data, data_pos, (*data_size));
+                mock_tls_read_current_chunk_offset += (*data_size);
+            }
+            else
+            {
+                memcpy(data, data_pos, data_in_chunk);
+                mock_tls_read_current_chunk_offset = 0;
+                mock_tls_read_current_chunk++;
+                (*data_size) = data_in_chunk;
+            }
         }
     }
 

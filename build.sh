@@ -15,11 +15,19 @@ fi
 
 docker build -t $BUILD_NAME:$VERSION .
 
+export DOCKER_OPT="--rm --user ${UID} -v ${PWD}:/src ${BUILD_NAME}:${VERSION}"
+
 if [ -n "$DOXYGEN" ]
 then
     export DOCKER_CMD="mkdir -p build && cd build && cmake .. && make doxygen"
 elif [ -n "$TEST" ]
 then
+    if [ -n "$HERE_TRACKING_TEST_DEVICE_ID" ] && [ -n "$HERE_TRACKING_TEST_DEVICE_SECRET" ]
+    then
+        export DOCKER_OPT="-e HERE_TRACKING_TEST_DEVICE_ID \
+                           -e HERE_TRACKING_TEST_DEVICE_SECRET \
+                           ${DOCKER_OPT}"
+    fi
     export DOCKER_CMD="mkdir -p build && cd build && \
         cmake .. -DBuildSampleApp=ON -DBuildTests=ON -DCodeCoverage=ON && \
         make && make test && make coverage"
@@ -27,7 +35,7 @@ else
     export DOCKER_CMD="mkdir -p build && cd build && cmake .. && make"
 fi
 
-docker run --rm --user $UID -v $PWD:/src $BUILD_NAME:$VERSION "${DOCKER_CMD}" || error=true
+docker run ${DOCKER_OPT} "${DOCKER_CMD}" || error=true
 docker rmi $BUILD_NAME:$VERSION
 
 if [ $error ]

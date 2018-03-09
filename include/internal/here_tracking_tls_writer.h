@@ -22,58 +22,41 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#ifndef MOCK_HERE_TRACKING_HTTP_H
-#define MOCK_HERE_TRACKING_HTTP_H
+#ifndef HERE_TRACKING_TLS_WRITER_H
+#define HERE_TRACKING_TLS_WRITER_H
 
-#include <fff.h>
+#include <stdint.h>
+#include <string.h>
 
-#include "here_tracking_http.h"
+#include "here_tracking_data_buffer.h"
+#include "here_tracking_error.h"
+#include "here_tracking_tls.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+typedef struct
+{
+    here_tracking_tls tls_ctx;
+    here_tracking_data_buffer data_buffer;
+} here_tracking_tls_writer;
 
-DECLARE_FAKE_VALUE_FUNC1(here_tracking_error, here_tracking_http_auth, here_tracking_client*);
+here_tracking_error here_tracking_tls_writer_init(here_tracking_tls_writer* writer,
+                                                  here_tracking_tls tls_ctx,
+                                                  uint8_t* write_buf,
+                                                  size_t write_buf_size);
 
-DECLARE_FAKE_VALUE_FUNC4(here_tracking_error,
-                         here_tracking_http_send,
-                         here_tracking_client*,
-                         char*,
-                         uint32_t,
-                         uint32_t);
+here_tracking_error here_tracking_tls_writer_write_char(here_tracking_tls_writer* writer,
+                                                        char c);
 
-DECLARE_FAKE_VALUE_FUNC5(here_tracking_error,
-                         here_tracking_http_send_stream,
-                         here_tracking_client*,
-                         here_tracking_send_cb,
-                         here_tracking_recv_cb,
-                         here_tracking_resp_type,
-                         void*);
+here_tracking_error here_tracking_tls_writer_write_data(here_tracking_tls_writer* writer,
+                                                        const uint8_t* data,
+                                                        size_t data_size);
 
-#define MOCK_HERE_TRACKING_HTTP_FAKE_LIST(FAKE) \
-    FAKE(here_tracking_http_auth)  \
-    FAKE(here_tracking_http_send)  \
-    FAKE(here_tracking_http_send_stream) \
+here_tracking_error here_tracking_tls_writer_write_string(here_tracking_tls_writer* writer,
+                                                          const char* s);
 
-void mock_here_tracking_http_auth_set_result_token(const char* token);
+here_tracking_error here_tracking_tls_writer_write_utoa(here_tracking_tls_writer* writer,
+                                                        uint32_t u,
+                                                        uint8_t base);
 
-here_tracking_error mock_here_tracking_http_auth_custom(here_tracking_client* client);
+here_tracking_error here_tracking_tls_writer_flush(here_tracking_tls_writer*);
 
-void mock_here_tracking_http_send_set_result_data(const char* data, uint32_t data_size);
-
-here_tracking_error mock_here_tracking_http_send_custom(here_tracking_client* client,
-                                                        char* data,
-                                                        uint32_t send_size,
-                                                        uint32_t recv_size);
-
-here_tracking_error mock_here_tracking_http_send_stream_custom(here_tracking_client* client,
-                                                               here_tracking_send_cb send_cb,
-                                                               here_tracking_recv_cb recv_cb,
-                                                               here_tracking_resp_type resp_type,
-                                                               void* user_data);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* MOCK_HERE_TRACKING_HTTP_H */
+#endif /* HERE_TRACKING_TLS_WRITER_H */

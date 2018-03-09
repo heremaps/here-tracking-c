@@ -1,27 +1,26 @@
 /**************************************************************************************************
-* Copyright (C) 2017 HERE Europe B.V.                                                             *
-* All rights reserved.                                                                            *
-*                                                                                                 *
-* MIT License                                                                                     *
-* Permission is hereby granted, free of charge, to any person obtaining a copy                    *
-* of this software and associated documentation files (the "Software"), to deal                   *
-* in the Software without restriction, including without limitation the rights                    *
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell                       *
-* copies of the Software, and to permit persons to whom the Software is                           *
-* furnished to do so, subject to the following conditions:                                        *
-*                                                                                                 *
-* The above copyright notice and this permission notice shall be included in all                  *
-* copies or substantial portions of the Software.                                                 *
-*                                                                                                 *
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR                      *
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,                        *
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE                     *
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER                          *
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,                   *
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE                   *
-* SOFTWARE.                                                                                       *
-**************************************************************************************************/
-
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * All rights reserved.                                                                           *
+ *                                                                                                *
+ * MIT License                                                                                    *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy                   *
+ * of this software and associated documentation files (the "Software"), to deal                  *
+ * in the Software without restriction, including without limitation the rights                   *
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell                      *
+ * copies of the Software, and to permit persons to whom the Software is                          *
+ * furnished to do so, subject to the following conditions:                                       *
+ *                                                                                                *
+ * The above copyright notice and this permission notice shall be included in all                 *
+ * copies or substantial portions of the Software.                                                *
+ *                                                                                                *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR                     *
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,                       *
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE                    *
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER                         *
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,                  *
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE                  *
+ * SOFTWARE.                                                                                      *
+ **************************************************************************************************/
 
 #include <stdlib.h>
 
@@ -51,6 +50,10 @@ static const char* simple_resp_zero_content_length = \
         "HTTP/2.15 404 Not Found\r\n"\
         "Content-Length: 0\r\n"\
         "Server: HERE_TRACKING_TEST/1.0.0\r\n"\
+        "\r\n";
+
+static const char* simple_resp_no_content = \
+        "HTTP/1.1 204 No Content\r\n"\
         "\r\n";
 
 /**************************************************************************************************/
@@ -251,6 +254,69 @@ static bool \
 
 /**************************************************************************************************/
 
+static bool \
+    test_here_tracking_http_parser_no_content_cb(const here_tracking_http_parser_evt* evt,
+                                                 bool last,
+                                                 void* cb_data)
+{
+    uint32_t* cb_count = (uint32_t*)cb_data;
+    (*cb_count)++;
+
+    switch(evt->id)
+    {
+        case HERE_TRACKING_HTTP_PARSER_EVT_VERSION:
+        {
+            ck_assert((*cb_count) == 1);
+            ck_assert(evt->data.version.major == 1);
+            ck_assert(evt->data.version.minor == 1);
+        }
+        break;
+
+        case HERE_TRACKING_HTTP_PARSER_EVT_STATUS_CODE:
+        {
+            ck_assert((*cb_count) == 2);
+            ck_assert(evt->data.status_code == 204);
+            ck_assert(last);
+        }
+        break;
+
+        case HERE_TRACKING_HTTP_PARSER_EVT_REASON:
+        {
+            ck_assert((*cb_count == 4));
+            ck_assert(evt->data.reason.buffer_size == 10);
+            ck_assert(memcmp(evt->data.reason.buffer, "No Content", 10) == 0);
+            ck_assert(last);
+        }
+        break;
+
+        case HERE_TRACKING_HTTP_PARSER_EVT_HDR:
+        {
+            ck_assert(true);
+        }
+        break;
+
+        case HERE_TRACKING_HTTP_PARSER_EVT_BODY:
+        {
+            ck_assert(true);
+        }
+        break;
+
+        case HERE_TRACKING_HTTP_PARSER_EVT_BODY_SIZE:
+        {
+            ck_assert((*cb_count) == 3);
+            ck_assert(evt->data.body_size == 0);
+        }
+        break;
+
+        default:
+            break;
+    }
+
+    return false;
+}
+
+/**************************************************************************************************/
+
 static bool test_here_tracking_http_parser_cb_nop(const here_tracking_http_parser_evt* evt,
                                                   bool last,
                                                   void* cb_data)
@@ -435,6 +501,29 @@ END_TEST
 
 /**************************************************************************************************/
 
+START_TEST(test_here_tracking_http_parser_ok_no_content)
+{
+    char* resp;
+    uint32_t cb_count = 0;
+    uint32_t resp_size = strlen(simple_resp_no_content);
+    here_tracking_http_parser parser;
+    here_tracking_error res = \
+        here_tracking_http_parser_init(&parser,
+                                       test_here_tracking_http_parser_no_content_cb,
+                                       (void*)(&cb_count));
+    ck_assert(res == HERE_TRACKING_OK);
+    resp = malloc(resp_size);
+    memcpy(resp, simple_resp_no_content, resp_size);
+    res = here_tracking_http_parser_parse(&parser, resp, &resp_size);
+    ck_assert(res == HERE_TRACKING_OK);
+    ck_assert(resp_size == strlen(simple_resp_no_content));
+    ck_assert(cb_count == 4);
+    free(resp);
+}
+END_TEST
+
+/**************************************************************************************************/
+
 START_TEST(test_here_tracking_http_parser_invalid_input)
 {
     char* resp;
@@ -607,6 +696,7 @@ Suite* test_here_tracking_http_parser_suite(void)
     tcase_add_test(tc, test_here_tracking_http_parser_ok_zero_content_length);
     tcase_add_test(tc, test_here_tracking_http_parser_ok_end_of_header_split);
     tcase_add_test(tc, test_here_tracking_http_parser_ok_one_byte_increment);
+    tcase_add_test(tc, test_here_tracking_http_parser_ok_no_content);
     tcase_add_test(tc, test_here_tracking_http_parser_invalid_input);
     tcase_add_test(tc, test_here_tracking_http_parser_no_content_length);
     tcase_add_test(tc, test_here_tracking_http_parser_invalid_version);

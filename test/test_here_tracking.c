@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -28,6 +28,7 @@
 #include <fff.h>
 
 #include "here_tracking.h"
+#include "here_tracking_test.h"
 
 #include "mock_here_tracking_http.h"
 #include "mock_here_tracking_time.h"
@@ -66,7 +67,9 @@ static const char* mock_recv_data = "MOCK_RECV_DATA";
 
 static uint32_t recv_data_cb_called = 0;
 
-static void test_here_tracking_setup()
+/**************************************************************************************************/
+
+static void test_here_tracking_tc_setup()
 {
     TEST_HERE_TRACKING_FAKE_LIST(RESET_FAKE);
     FFF_RESET_HISTORY();
@@ -74,6 +77,8 @@ static void test_here_tracking_setup()
     here_tracking_http_auth_fake.custom_fake = mock_here_tracking_http_auth_custom;
     here_tracking_http_send_fake.return_val = HERE_TRACKING_OK;
     here_tracking_http_send_fake.custom_fake = mock_here_tracking_http_send_custom;
+    here_tracking_http_send_stream_fake.return_val = HERE_TRACKING_OK;
+    here_tracking_http_send_stream_fake.custom_fake = mock_here_tracking_http_send_stream_custom;
     here_tracking_get_unixtime_fake.return_val = HERE_TRACKING_OK;
     here_tracking_get_unixtime_fake.custom_fake = mock_here_tracking_get_unixtime_custom;
     here_tracking_tls_free_fake.return_val = HERE_TRACKING_OK;
@@ -81,6 +86,12 @@ static void test_here_tracking_setup()
     mock_here_tracking_http_auth_set_result_token(mock_access_token);
     mock_here_tracking_http_send_set_result_data(NULL, 0);
     recv_data_cb_called = 0;
+}
+
+/**************************************************************************************************/
+
+void test_here_tracking_tc_teardown(void)
+{
 }
 
 /**************************************************************************************************/
@@ -111,11 +122,28 @@ static void test_here_tracking_recv_data_cb_send_ok(here_tracking_error err,
 
 /**************************************************************************************************/
 
+static here_tracking_error test_here_tracking_send_cb(uint8_t** data,
+                                                      size_t* data_size,
+                                                      void* user_data)
+{
+    return HERE_TRACKING_OK;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error test_here_tracking_recv_cb(const here_tracking_recv_data* data,
+                                                      void* user_data)
+{
+    recv_data_cb_called++;
+    return HERE_TRACKING_OK;
+}
+
+/**************************************************************************************************/
+
 START_TEST(test_here_tracking_init_ok)
 {
     here_tracking_client client;
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
     ck_assert(memcmp(client.device_id, device_id, HERE_TRACKING_DEVICE_ID_SIZE) == 0);
@@ -134,7 +162,6 @@ START_TEST(test_here_tracking_init_invalid_input)
     here_tracking_client client;
     char base_url_too_long[HERE_TRACKING_BASE_URL_SIZE + 1];
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_init(NULL, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
     res = here_tracking_init(&client, NULL, device_secret, base_url);
@@ -155,7 +182,6 @@ START_TEST(test_here_tracking_auth_ok)
 {
     here_tracking_client client;
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
     res = here_tracking_auth(&client);
@@ -176,7 +202,6 @@ START_TEST(test_here_tracking_auth_time_mismatch)
         HERE_TRACKING_OK
     };
 
-    test_here_tracking_setup();
     SET_RETURN_SEQ(here_tracking_http_auth, http_auth_res, 2);
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
@@ -191,7 +216,6 @@ END_TEST
 START_TEST(test_here_tracking_auth_invalid_input)
 {
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_auth(NULL);
     ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
 }
@@ -203,7 +227,6 @@ START_TEST(test_here_tracking_set_recv_data_cb_ok)
 {
     here_tracking_client client;
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
     res = here_tracking_set_recv_data_cb(&client, test_here_tracking_recv_data_cb_nop, &client);
@@ -218,7 +241,6 @@ END_TEST
 START_TEST(test_here_tracking_set_recv_data_cb_invalid_input)
 {
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_set_recv_data_cb(NULL, test_here_tracking_recv_data_cb_nop, NULL);
     ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
 }
@@ -231,7 +253,6 @@ START_TEST(test_here_tracking_send_ok)
     here_tracking_client client;
     here_tracking_error res;
     char data[100];
-    test_here_tracking_setup();
     mock_here_tracking_http_send_set_result_data(mock_recv_data, strlen(mock_recv_data));
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
@@ -252,7 +273,6 @@ START_TEST(test_here_tracking_send_invalid_input)
     here_tracking_client client;
     here_tracking_error res;
     static char data[100];
-    test_here_tracking_setup();
     res = here_tracking_send(NULL, data, 100, 100);
     ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
     res = here_tracking_send(&client, NULL, 100, 100);
@@ -271,7 +291,6 @@ START_TEST(test_here_tracking_send_no_token_yet)
     here_tracking_client client;
     here_tracking_error res;
     char data[100];
-    test_here_tracking_setup();
     mock_here_tracking_http_send_set_result_data(mock_recv_data, strlen(mock_recv_data));
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
@@ -291,7 +310,6 @@ START_TEST(test_here_tracking_send_token_expired)
     here_tracking_client client;
     here_tracking_error res;
     char data[100];
-    test_here_tracking_setup();
     mock_here_tracking_get_unixtime_set_result(1000);
     mock_here_tracking_http_send_set_result_data(mock_recv_data, strlen(mock_recv_data));
     strcpy(client.access_token, "expired_token");
@@ -313,7 +331,6 @@ START_TEST(test_here_tracking_send_time_error)
     here_tracking_client client;
     here_tracking_error res;
     char data[100];
-    test_here_tracking_setup();
     here_tracking_get_unixtime_fake.return_val = HERE_TRACKING_ERROR;
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
@@ -330,7 +347,6 @@ START_TEST(test_here_tracking_free_tls_initialized)
 {
     here_tracking_client client;
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
     client.tls = (here_tracking_tls)1;
@@ -346,7 +362,6 @@ START_TEST(test_here_tracking_free_tls_null)
 {
     here_tracking_client client;
     here_tracking_error res;
-    test_here_tracking_setup();
     res = here_tracking_init(&client, device_id, device_secret, base_url);
     ck_assert(res == HERE_TRACKING_OK);
     res = here_tracking_free(&client);
@@ -365,38 +380,144 @@ END_TEST
 
 /**************************************************************************************************/
 
-Suite* test_here_tracking_suite(void)
+START_TEST(test_here_tracking_send_stream_ok)
 {
-    Suite* s = suite_create(TEST_NAME);
-    TCase* tc = tcase_create(TEST_NAME);
-    tcase_add_test(tc, test_here_tracking_init_ok);
-    tcase_add_test(tc, test_here_tracking_init_invalid_input);
-    tcase_add_test(tc, test_here_tracking_auth_ok);
-    tcase_add_test(tc, test_here_tracking_auth_time_mismatch);
-    tcase_add_test(tc, test_here_tracking_auth_invalid_input);
-    tcase_add_test(tc, test_here_tracking_set_recv_data_cb_ok);
-    tcase_add_test(tc, test_here_tracking_set_recv_data_cb_invalid_input);
-    tcase_add_test(tc, test_here_tracking_send_ok);
-    tcase_add_test(tc, test_here_tracking_send_invalid_input);
-    tcase_add_test(tc, test_here_tracking_send_no_token_yet);
-    tcase_add_test(tc, test_here_tracking_send_token_expired);
-    tcase_add_test(tc, test_here_tracking_send_time_error);
-    tcase_add_test(tc, test_here_tracking_free_tls_initialized);
-    tcase_add_test(tc, test_here_tracking_free_tls_null);
-    tcase_add_test(tc, test_here_tracking_free_client_null);
-    suite_add_tcase(s, tc);
-    return s;
+    here_tracking_client client;
+    here_tracking_error res;
+
+    mock_here_tracking_http_send_set_result_data(mock_recv_data, strlen(mock_recv_data));
+    res = here_tracking_init(&client, device_id, device_secret, base_url);
+    ck_assert(res == HERE_TRACKING_OK);
+    res = here_tracking_auth(&client);
+    ck_assert(res == HERE_TRACKING_OK);
+    res = here_tracking_send_stream(&client,
+                                    test_here_tracking_send_cb,
+                                    test_here_tracking_recv_cb,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(res == HERE_TRACKING_OK);
+    ck_assert(recv_data_cb_called == 3);
 }
+END_TEST
 
 /**************************************************************************************************/
 
-int main()
+START_TEST(test_here_tracking_send_stream_invalid_input)
 {
-    int failed;
-    SRunner* sr = srunner_create(test_here_tracking_suite());
-    srunner_set_xml(sr, TEST_NAME"_test_result.xml");
-    srunner_run_all(sr, CK_VERBOSE);
-    failed = srunner_ntests_failed(sr);
-    srunner_free(sr);
-    return (failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+    here_tracking_client client;
+    here_tracking_error res;
+
+    res = here_tracking_send_stream(NULL,
+                                    test_here_tracking_send_cb,
+                                    test_here_tracking_recv_cb,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    res = here_tracking_send_stream(&client,
+                                    NULL,
+                                    test_here_tracking_recv_cb,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    res = here_tracking_send_stream(&client,
+                                    test_here_tracking_send_cb,
+                                    NULL,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
 }
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_send_stream_no_token_yet)
+{
+    here_tracking_client client;
+    here_tracking_error res;
+
+    mock_here_tracking_http_send_set_result_data(mock_recv_data, strlen(mock_recv_data));
+    res = here_tracking_init(&client, device_id, device_secret, base_url);
+    ck_assert(res == HERE_TRACKING_OK);
+    res = here_tracking_send_stream(&client,
+                                    test_here_tracking_send_cb,
+                                    test_here_tracking_recv_cb,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(strcmp(client.access_token, mock_access_token) == 0);
+    ck_assert(res == HERE_TRACKING_OK);
+    ck_assert(recv_data_cb_called == 3);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_send_stream_token_expired)
+{
+    here_tracking_client client;
+    here_tracking_error res;
+
+    mock_here_tracking_get_unixtime_set_result(1000);
+    mock_here_tracking_http_send_set_result_data(mock_recv_data, strlen(mock_recv_data));
+    strcpy(client.access_token, "expired_token");
+    res = here_tracking_init(&client, device_id, device_secret, base_url);
+    ck_assert(res == HERE_TRACKING_OK);
+    res = here_tracking_send_stream(&client,
+                                    test_here_tracking_send_cb,
+                                    test_here_tracking_recv_cb,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(strcmp(client.access_token, mock_access_token) == 0);
+    ck_assert(res == HERE_TRACKING_OK);
+    ck_assert(recv_data_cb_called == 3);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_send_stream_time_error)
+{
+    here_tracking_client client;
+    here_tracking_error res;
+
+    here_tracking_get_unixtime_fake.return_val = HERE_TRACKING_ERROR;
+    res = here_tracking_init(&client, device_id, device_secret, base_url);
+    ck_assert(res == HERE_TRACKING_OK);
+    res = here_tracking_send_stream(&client,
+                                    test_here_tracking_send_cb,
+                                    test_here_tracking_recv_cb,
+                                    HERE_TRACKING_RESP_WITH_DATA,
+                                    NULL);
+    ck_assert(res == HERE_TRACKING_ERROR);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+TEST_SUITE_BEGIN(TEST_NAME)
+    TEST_SUITE_ADD_SETUP_TEARDOWN_FN(test_here_tracking_tc_setup,
+                                     test_here_tracking_tc_teardown)
+    TEST_SUITE_ADD_TEST(test_here_tracking_init_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_init_invalid_input)
+    TEST_SUITE_ADD_TEST(test_here_tracking_auth_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_auth_time_mismatch)
+    TEST_SUITE_ADD_TEST(test_here_tracking_auth_invalid_input)
+    TEST_SUITE_ADD_TEST(test_here_tracking_set_recv_data_cb_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_set_recv_data_cb_invalid_input)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_invalid_input)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_no_token_yet)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_token_expired)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_time_error)
+    TEST_SUITE_ADD_TEST(test_here_tracking_free_tls_initialized)
+    TEST_SUITE_ADD_TEST(test_here_tracking_free_tls_null)
+    TEST_SUITE_ADD_TEST(test_here_tracking_free_client_null)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_stream_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_stream_invalid_input)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_stream_no_token_yet)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_stream_token_expired)
+    TEST_SUITE_ADD_TEST(test_here_tracking_send_stream_time_error)
+TEST_SUITE_END
+
+/**************************************************************************************************/
+
+TEST_MAIN(TEST_NAME)

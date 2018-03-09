@@ -22,58 +22,28 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#ifndef MOCK_HERE_TRACKING_HTTP_H
-#define MOCK_HERE_TRACKING_HTTP_H
+#ifndef HERE_TRACKING_HTTP_DEFS_H
+#define HERE_TRACKING_HTTP_DEFS_H
 
-#include <fff.h>
+#define HERE_TRACKING_HTTP_STATUS_OK                  200
+#define HERE_TRACKING_HTTP_STATUS_NO_CONTENT          204
+#define HERE_TRACKING_HTTP_STATUS_BAD_REQUEST         400
+#define HERE_TRACKING_HTTP_STATUS_UNAUTHORIZED        401
+#define HERE_TRACKING_HTTP_STATUS_FORBIDDEN           403
+#define HERE_TRACKING_HTTP_STATUS_NOT_FOUND           404
+#define HERE_TRACKING_HTTP_STATUS_PRECONDITION_FAILED 412
 
-#include "here_tracking_http.h"
+extern const char* here_tracking_http_connection_close;
+extern const char* here_tracking_http_crlf;
+extern const char* here_tracking_http_header_authorization;
+extern const char* here_tracking_http_header_connection;
+extern const char* here_tracking_http_header_content_length;
+extern const char* here_tracking_http_header_transfer_encoding;
+extern const char* here_tracking_http_method_get;
+extern const char* here_tracking_http_method_post;
+extern const char* here_tracking_http_path_token;
+extern const char* here_tracking_http_path_version;
+extern const char* here_tracking_http_protocol_https;
+extern const char* here_tracking_http_transfer_encoding_chunked;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-DECLARE_FAKE_VALUE_FUNC1(here_tracking_error, here_tracking_http_auth, here_tracking_client*);
-
-DECLARE_FAKE_VALUE_FUNC4(here_tracking_error,
-                         here_tracking_http_send,
-                         here_tracking_client*,
-                         char*,
-                         uint32_t,
-                         uint32_t);
-
-DECLARE_FAKE_VALUE_FUNC5(here_tracking_error,
-                         here_tracking_http_send_stream,
-                         here_tracking_client*,
-                         here_tracking_send_cb,
-                         here_tracking_recv_cb,
-                         here_tracking_resp_type,
-                         void*);
-
-#define MOCK_HERE_TRACKING_HTTP_FAKE_LIST(FAKE) \
-    FAKE(here_tracking_http_auth)  \
-    FAKE(here_tracking_http_send)  \
-    FAKE(here_tracking_http_send_stream) \
-
-void mock_here_tracking_http_auth_set_result_token(const char* token);
-
-here_tracking_error mock_here_tracking_http_auth_custom(here_tracking_client* client);
-
-void mock_here_tracking_http_send_set_result_data(const char* data, uint32_t data_size);
-
-here_tracking_error mock_here_tracking_http_send_custom(here_tracking_client* client,
-                                                        char* data,
-                                                        uint32_t send_size,
-                                                        uint32_t recv_size);
-
-here_tracking_error mock_here_tracking_http_send_stream_custom(here_tracking_client* client,
-                                                               here_tracking_send_cb send_cb,
-                                                               here_tracking_recv_cb recv_cb,
-                                                               here_tracking_resp_type resp_type,
-                                                               void* user_data);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* MOCK_HERE_TRACKING_HTTP_H */
+#endif /* HERE_TRACKING_HTTP_DEFS_H */

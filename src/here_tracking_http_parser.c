@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "here_tracking_http.h"
+#include "here_tracking_http_defs.h"
 #include "here_tracking_http_parser.h"
 #include "here_tracking_utils.h"
 
@@ -283,6 +284,17 @@ static here_tracking_error \
             (*data_size) = 4;
             err = parser->cb(&evt, true, parser->cb_data) ?
                 HERE_TRACKING_ERROR_CLIENT_INTERRUPT : HERE_TRACKING_OK;
+
+            /* There is no content length header in "No Content" response, set content size to 0. */
+            if(evt.data.status_code == HERE_TRACKING_HTTP_STATUS_NO_CONTENT)
+            {
+                parser->content_size = 0;
+                evt.id = HERE_TRACKING_HTTP_PARSER_EVT_BODY_SIZE;
+                evt.data.body_size = (uint32_t)parser->content_size;
+                err = parser->cb(&evt, true, parser->cb_data) ?
+                    HERE_TRACKING_ERROR_CLIENT_INTERRUPT : HERE_TRACKING_OK;
+            }
+
             parser->evt_state = HERE_TRACKING_HTTP_PARSER_EVT_REASON;
         }
         else

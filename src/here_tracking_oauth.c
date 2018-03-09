@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -25,10 +25,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "here_tracking.h"
 #include "here_tracking_base64.h"
 #include "here_tracking_data_buffer.h"
 #include "here_tracking_hmac_sha.h"
-#include "here_tracking_http.h"
+#include "here_tracking_http_defs.h"
 #include "here_tracking_log.h"
 #include "here_tracking_oauth.h"
 #include "here_tracking_time.h"
@@ -422,7 +423,7 @@ static here_tracking_error \
 
     TRY((here_tracking_get_unixtime(&ts)));
     ts += srv_time_diff;
-    TRY((here_tracking_data_buffer_add_utoa(data_buf, ts)));
+    TRY((here_tracking_data_buffer_add_utoa(data_buf, ts, 10)));
 
 here_tracking_oauth_error:
     return err;
@@ -514,11 +515,11 @@ static here_tracking_error \
                                             (uint32_t)strlen(here_tracking_http_protocol_https))));
     TRY((here_tracking_data_buffer_add_string(data_buf, base_url)));
     TRY((here_tracking_oauth_percent_encode(data_buf,
-                                        here_tracking_http_device_http_version,
-                                        (uint32_t)strlen(here_tracking_http_device_http_version))));
+                                            here_tracking_http_path_version,
+                                            (uint32_t)strlen(here_tracking_http_path_version))));
     TRY((here_tracking_oauth_percent_encode(data_buf,
-                                        here_tracking_http_device_http_token,
-                                        (uint32_t)strlen(here_tracking_http_device_http_token))));
+                                            here_tracking_http_path_token,
+                                            (uint32_t)strlen(here_tracking_http_path_token))));
     TRY((here_tracking_data_buffer_add_char(data_buf, '&')));
 
     for(i = 0; i < HERE_TRACKING_OAUTH_PARAM_COUNT; ++i)

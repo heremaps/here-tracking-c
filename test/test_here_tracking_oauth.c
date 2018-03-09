@@ -64,13 +64,6 @@ FAKE_VALUE_FUNC6(here_tracking_error,
 
 /**************************************************************************************************/
 
-const char* here_tracking_http_method_post =        "POST";
-const char* here_tracking_http_protocol_https =     "https://";
-const char* here_tracking_http_device_http_token =   "/token";
-const char* here_tracking_http_device_http_version = "/v2";
-
-/**************************************************************************************************/
-
 static void test_here_tracking_oauth_setup()
 {
     TEST_HERE_TRACKING_OAUTH_FAKE_LIST(RESET_FAKE);

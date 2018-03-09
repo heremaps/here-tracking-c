@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -27,6 +27,10 @@
 #include "here_tracking.h"
 #include "here_tracking_http.h"
 #include "here_tracking_time.h"
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_update_token_if_needed(here_tracking_client* client);
 
 /**************************************************************************************************/
 
@@ -126,20 +130,53 @@ here_tracking_error here_tracking_send(here_tracking_client* client,
 
     if(client != NULL && data != NULL && send_size > 0 && recv_size > 0)
     {
-        uint32_t ts;
-
-        err = here_tracking_get_unixtime(&ts);
-
-        if(err == HERE_TRACKING_OK &&
-           (strlen(client->access_token) == 0 || client->token_expiry < ts))
-        {
-            err = here_tracking_auth(client);
-        }
+        err = here_tracking_update_token_if_needed(client);
 
         if(err == HERE_TRACKING_OK)
         {
             err = here_tracking_http_send(client, data, send_size, recv_size);
         }
+    }
+
+    return err;
+}
+
+/**************************************************************************************************/
+
+here_tracking_error here_tracking_send_stream(here_tracking_client* client,
+                                              here_tracking_send_cb send_cb,
+                                              here_tracking_recv_cb recv_cb,
+                                              here_tracking_resp_type resp_type,
+                                              void* user_data)
+{
+    here_tracking_error err = HERE_TRACKING_ERROR_INVALID_INPUT;;
+
+    if(client != NULL && send_cb != NULL && recv_cb != NULL)
+    {
+        err = here_tracking_update_token_if_needed(client);
+
+        if(err == HERE_TRACKING_OK)
+        {
+            err = here_tracking_http_send_stream(client, send_cb, recv_cb, resp_type, user_data);
+        }
+    }
+
+    return err;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_update_token_if_needed(here_tracking_client* client)
+{
+    here_tracking_error err;
+    uint32_t ts;
+
+    err = here_tracking_get_unixtime(&ts);
+
+    if(err == HERE_TRACKING_OK &&
+       (strlen(client->access_token) == 0 || client->token_expiry < ts))
+    {
+        err = here_tracking_auth(client);
     }
 
     return err;

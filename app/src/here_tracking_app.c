@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,6 +22,7 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,19 +38,47 @@
 typedef struct
 {
     here_tracking_client client;
-    char data_buffer[HERE_TRACKING_APP_DATA_BUFFER_SIZE];
+    uint8_t data_buffer[HERE_TRACKING_APP_DATA_BUFFER_SIZE];
+    bool send_complete;
 } here_tracking_app;
 
 static here_tracking_app app;
 
 /**************************************************************************************************/
 
-static void here_tracking_app_data_cb(here_tracking_error err,
-                                      const char* data,
-                                      uint32_t data_size,
-                                      void* user_data)
+static here_tracking_error here_tracking_app_send_cb(uint8_t** data,
+                                                     size_t* data_size,
+                                                     void* user_data)
 {
-    return;
+    if(!app.send_complete)
+    {
+        uint32_t ts;
+
+        memset(app.data_buffer, 0x00, HERE_TRACKING_APP_DATA_BUFFER_SIZE);
+        here_tracking_get_unixtime(&ts);
+        snprintf((char*)app.data_buffer,
+                 HERE_TRACKING_APP_DATA_BUFFER_SIZE,
+                 "[{\"payload\":{\"clientName\":\"here-tracking-c\"},\"timestamp\":%llu}]",
+                 ((unsigned long long)ts) * 1000);
+        *data = app.data_buffer;
+        *data_size = strlen((char*)app.data_buffer);
+        app.send_complete = true;
+    }
+    else
+    {
+        *data = NULL;
+        *data_size = 0;
+        app.send_complete = false;
+    }
+    return HERE_TRACKING_OK;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_app_recv_cb(const here_tracking_recv_data* data,
+                                                     void* user_data)
+{
+    return HERE_TRACKING_OK;
 }
 
 /**************************************************************************************************/
@@ -98,25 +127,15 @@ int main(int argc, char** argv)
 
         err = here_tracking_init(&app.client, device_id, device_secret, base_url);
 
-        if(err == HERE_TRACKING_OK)
-        {
-            err = here_tracking_set_recv_data_cb(&app.client, here_tracking_app_data_cb, &app);
-        }
+        app.send_complete = false;
 
         while(samples_to_send > 0)
         {
-            uint32_t ts;
-
-            memset(app.data_buffer, 0x00, HERE_TRACKING_APP_DATA_BUFFER_SIZE);
-            here_tracking_get_unixtime(&ts);
-            snprintf(app.data_buffer,
-                     HERE_TRACKING_APP_DATA_BUFFER_SIZE,
-                     "[{\"payload\":{\"clientName\":\"here-tracking-c\"},\"timestamp\":%llu}]",
-                     ((unsigned long long)ts) * 1000);
-            err = here_tracking_send(&app.client,
-                                     app.data_buffer,
-                                     strlen(app.data_buffer),
-                                     HERE_TRACKING_APP_DATA_BUFFER_SIZE);
+            err = here_tracking_send_stream(&app.client,
+                                            here_tracking_app_send_cb,
+                                            here_tracking_app_recv_cb,
+                                            HERE_TRACKING_RESP_WITH_DATA,
+                                            NULL);
 
             if(err != HERE_TRACKING_OK)
             {

@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -83,7 +83,25 @@ extern "C" {
 #define HERE_TRACKING_DEVICE_SECRET_SIZE 43
 
 /**
- * @brief Callback function that is called when device configuration data is received from
+ * @brief HERE Tracking response types for send operation.
+ */
+typedef enum
+{
+    /**
+     * @brief Receive detailed response data.
+     */
+    HERE_TRACKING_RESP_WITH_DATA = 0,
+
+    /**
+     * @brief Receive only status code in response and no additional data.
+     */
+    HERE_TRACKING_RESP_STATUS_ONLY = 1
+} here_tracking_resp_type;
+
+/**
+ * @deprecated Will be removed in ::HERE_TRACKING_VERSION_MAJOR 2.
+ *
+ * @brief Callback function that is called when response to send operation is received from
  *        HERE Tracking.
  *
  * Possible error codes:
@@ -102,6 +120,86 @@ typedef void (*here_tracking_recv_data_cb)(here_tracking_error err,
                                            const char* data,
                                            uint32_t data_size,
                                            void* user_data);
+
+/**
+ * @brief Callback function that is called when HERE Tracking client is sending data to
+ * HERE Tracking server.
+ *
+ * @param[out] data Pointer to buffer containing data to be sent.
+ *                  Set to NULL to indicate that there is no more data to be sent.
+ * @param[out] data_size Number of bytes to send.
+ *                       Set to 0 to indicate that there is no more data to be sent.
+ * @param[in] user_data User data.
+ * @return ::HERE_TRACKING_OK in case of success.
+ * @return Other error code if error occured while handling the callback.
+ */
+typedef here_tracking_error (*here_tracking_send_cb)(uint8_t** data,
+                                                     size_t* data_size,
+                                                     void* user_data);
+
+/**
+ * @brief Receive events.
+ */
+typedef enum
+{
+    /**
+     * @brief Event informing the total size of response in bytes.
+     */
+    HERE_TRACKING_RECV_EVT_RESP_SIZE     = 0,
+
+    /**
+     * @brief Event informing that (part of) response data has been received.
+     */
+    HERE_TRACKING_RECV_EVT_RESP_DATA     = 1,
+
+    /**
+     * @brief Event informing that response is complete.
+     */
+    HERE_TRACKING_RECV_EVT_RESP_COMPLETE = 2
+} here_tracking_recv_evt;
+
+typedef struct
+{
+    /**
+     * @brief Event type
+     */
+    here_tracking_recv_evt evt;
+
+    /**
+     * @brief Error status of the event.
+     *
+     * Set for all event types.
+     */
+    here_tracking_error err;
+
+    /**
+     * @brief Pointer buffer containing received response data.
+     *
+     * Set only for event ::HERE_TRACKING_IO_RECV_EVT_RESP_DATA.
+     */
+    uint8_t* data;
+
+    /**
+     * @brief Size of data in bytes.
+     *
+     * - For event ::HERE_TRACKING_IO_RECV_EVT_RESP_SIZE set to the total number of bytes in the
+     * response.
+     * - For event ::HERE_TRACKING_IO_RECV_EVT_RESP_DATA set to the number of bytes in the buffer
+     * @link here_tracking_io_recv_data::data @endlink .
+     */
+    size_t data_size;
+} here_tracking_recv_data;
+
+/**
+ * @brief Receive event callback.
+ *
+ * @param[in] data Receive event data.
+ * @param[in] user_data User data.
+ * @return ::HERE_TRACKING_OK if the event was processed without errors.
+ * @return Other error code if error occured while processing the event.
+ */
+typedef here_tracking_error (*here_tracking_recv_cb)(const here_tracking_recv_data* data,
+                                                     void* user_data);
 
 /**
  * @brief The HERE Tracking Client Structure.
@@ -174,6 +272,8 @@ here_tracking_error here_tracking_init(here_tracking_client* client,
 here_tracking_error here_tracking_free(here_tracking_client* client);
 
 /**
+ * @deprecated Will be removed in ::HERE_TRACKING_VERSION_MAJOR 2.
+ *
  * @brief Sets the callback method to be invoked when data is received from HERE Tracking.
  *
  * Subsequent calls to this method will replace the previously set callback. Passing NULL in @p cb
@@ -207,10 +307,12 @@ here_tracking_error here_tracking_set_recv_data_cb(here_tracking_client* client,
 here_tracking_error here_tracking_auth(here_tracking_client* client);
 
 /**
+ * @deprecated Will be removed in ::HERE_TRACKING_VERSION_MAJOR 2.
+ *
  * @brief Sends data to HERE Tracking.
  *
- * This method also requests a new access token if there isn't one available yet or if the current one has
- * expired. After the data in the given buffer is sent, the same buffer is used to receive
+ * This method also requests a new access token if there isn't one available yet or if the current
+ * one has expired. After the data in the given buffer is sent, the same buffer is used to receive
  * the response data. The caller must wait for the data callback before using or releasing this
  * buffer.
  *
@@ -228,6 +330,31 @@ here_tracking_error here_tracking_send(here_tracking_client* client,
                                        char* data,
                                        uint32_t send_size,
                                        uint32_t recv_size);
+
+/**
+ * @brief Sends data to HERE Tracking.
+ *
+ * This method also requests a new access token if there isn't one available yet or if the current
+ * one has expired.
+ *
+ * @param[in] client Pointer to the initialized client structure.
+ * @param[in] send_cb Callback function that will be called by the library to request data for
+ *                    sending.
+ * @param[in] recv_cb Callback function that will be called by the library when response data is
+ *                    received from HERE Tracking server.
+ * @param[in] resp_type Response type to use.
+ * @param[in] user_data User data to pass back as an argument in send and recv callbacks.
+ * @return ::HERE_TRACKING_OK HERE Tracking client has successfully sent the data to HERE Tracking.
+ * @return ::HERE_TRACKING_ERROR_INVALID_INPUT One or more input parameters were invalid.
+ * @return ::HERE_TRACKING_ERROR_TIME_MISMATCH The time on the device doesn't match the time on the
+ *         HERE Tracking server.
+ * @return ::HERE_TRACKING_ERROR An unknown error occurred.
+ */
+here_tracking_error here_tracking_send_stream(here_tracking_client* client,
+                                              here_tracking_send_cb send_cb,
+                                              here_tracking_recv_cb recv_cb,
+                                              here_tracking_resp_type resp_type,
+                                              void* user_data);
 
 #ifdef __cplusplus
 }

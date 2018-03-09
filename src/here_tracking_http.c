@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -27,18 +27,12 @@
 
 #include "here_tracking_data_buffer.h"
 #include "here_tracking_http.h"
+#include "here_tracking_http_defs.h"
 #include "here_tracking_http_parser.h"
 #include "here_tracking_oauth.h"
 #include "here_tracking_time.h"
+#include "here_tracking_tls_writer.h"
 #include "here_tracking_utils.h"
-
-/**************************************************************************************************/
-
-#define HERE_TRACKING_HTTP_STATUS_OK                  200
-#define HERE_TRACKING_HTTP_STATUS_BAD_REQUEST         400
-#define HERE_TRACKING_HTTP_STATUS_UNAUTHORIZED        401
-#define HERE_TRACKING_HTTP_STATUS_FORBIDDEN           403
-#define HERE_TRACKING_HTTP_STATUS_PRECONDITION_FAILED 412
 
 /**************************************************************************************************/
 
@@ -46,31 +40,17 @@
 
 /**************************************************************************************************/
 
-const char* here_tracking_http_method_post = "POST";
+static const char* here_tracking_http_query_async = "?async=true";
 
 /**************************************************************************************************/
 
-const char* here_tracking_http_protocol_https = "https://";
-
-/**************************************************************************************************/
-
-const char* here_tracking_http_device_http_token        = "/token";
-const char* here_tracking_http_device_http_version      = "/v2";
-
-/**************************************************************************************************/
-
-static const char* here_tracking_http_header_authorization =    "Authorization";
 static const char* here_tracking_http_header_bearer =           "Bearer";
-static const char* here_tracking_http_header_connection =       "Connection";
-const char* here_tracking_http_header_content_length =          "Content-Length";
 static const char* here_tracking_http_header_content_type =     "Content-Type";
 static const char* here_tracking_http_header_host =             "Host";
 static const char* here_tracking_http_header_x_here_timestamp = "x-here-timestamp";
 
 /**************************************************************************************************/
 
-static const char* here_tracking_http_connection_close = "close";
-const char* here_tracking_http_crlf =                    "\r\n";
 static const char* here_tracking_http_version =          "HTTP/1.1";
 static const char* here_tracking_http_access_token =     "\"accessToken\"";
 static const char* here_tracking_http_expires_in =       "\"expiresIn\"";
@@ -80,17 +60,15 @@ static const char* here_tracking_http_application_json = "application/json";
 
 #define TRY(OP) if((err = (OP)) != HERE_TRACKING_OK) { goto here_tracking_http_error; }
 
-#define HERE_TRACKING_HTTP_ADD_HEADER(BUF, KEY, VAL) \
-    TRY((here_tracking_data_buffer_add_string((BUF), KEY))); \
-    TRY((here_tracking_data_buffer_add_char((BUF), ':'))); \
-    TRY((here_tracking_data_buffer_add_string((BUF), VAL))); \
-    TRY((here_tracking_data_buffer_add_string((BUF), here_tracking_http_crlf)))
+#define HERE_TRACKING_HTTP_WRITE_HEADER(WRITER, KEY, VAL) \
+    TRY((here_tracking_tls_writer_write_string((WRITER), KEY))); \
+    TRY((here_tracking_tls_writer_write_char((WRITER), ':'))); \
+    TRY((here_tracking_tls_writer_write_string((WRITER), VAL))); \
+    TRY((here_tracking_tls_writer_write_string((WRITER), here_tracking_http_crlf)))
 
 /**************************************************************************************************/
 
-#define HERE_TRACKING_HTTP_WORK_BUF_SIZE 2048
-
-static char here_tracking_http_work_buf[HERE_TRACKING_HTTP_WORK_BUF_SIZE];
+#define HERE_TRACKING_HTTP_TLS_BUFFER_SIZE 256
 
 /**************************************************************************************************/
 
@@ -121,11 +99,20 @@ typedef struct
 
 typedef struct
 {
+    uint8_t* send_data;
+    size_t send_data_size;
+    size_t body_size;
+    here_tracking_data_buffer resp_buffer;
+    here_tracking_error status_code;
+} here_tracking_http_send_recv_ctx;
+
+typedef struct
+{
     here_tracking_client* client;
     here_tracking_error status_code;
-    uint32_t body_size;
-    here_tracking_data_buffer resp_buffer;
-} here_tracking_http_send_data;
+    here_tracking_recv_cb recv_cb;
+    void* user_data;
+} here_tracking_http_recv_ctx;
 
 /**************************************************************************************************/
 
@@ -137,13 +124,13 @@ static bool here_tracking_http_send_resp_cb(const here_tracking_http_parser_evt*
                                             bool last,
                                             void* cb_data);
 
-static here_tracking_error here_tracking_http_connect(here_tracking_client* client);
-
-static here_tracking_error here_tracking_http_send_req(here_tracking_client* client,
-                                                       const char* req,
-                                                       uint32_t req_size);
+static here_tracking_error here_tracking_http_connect(here_tracking_client* client,
+                                                      const char* host,
+                                                      uint16_t port);
 
 static here_tracking_error here_tracking_http_recv_resp(here_tracking_client* client,
+                                                        uint8_t* recv_buffer,
+                                                        size_t recv_buffer_size,
                                                         here_tracking_http_parser_evt_cb resp_cb,
                                                         void* resp_cb_data);
 
@@ -154,56 +141,90 @@ static bool here_tracking_http_auth_done(here_tracking_http_auth_data* auth_data
 
 static here_tracking_error here_tracking_http_status_code_to_err(uint16_t http_status_code);
 
+static here_tracking_error here_tracking_http_send_chunk(here_tracking_tls_writer* tls_writer,
+                                                         const uint8_t* chunk_data,
+                                                         size_t chunk_size);
+
+static here_tracking_error here_tracking_http_send_cb(uint8_t** data,
+                                                      size_t* data_size,
+                                                      void* user_data);
+
+static here_tracking_error here_tracking_http_recv_cb(const here_tracking_recv_data* data,
+                                                      void* user_data);
+
+static here_tracking_error \
+    here_tracking_http_get_write_auth_header(here_tracking_tls_writer* tls_writer,
+                                             const here_tracking_http_header* auth_header);
+
 /**************************************************************************************************/
 
 here_tracking_error here_tracking_http_auth(here_tracking_client* client)
 {
-    here_tracking_error err = here_tracking_http_connect(client);
+    here_tracking_error err = here_tracking_http_connect(client,
+                                                         client->base_url,
+                                                         HERE_TRACKING_HTTP_PORT_HTTPS);
 
     if(err == HERE_TRACKING_OK)
     {
-        here_tracking_data_buffer data_buf;
-        uint32_t size;
+        here_tracking_tls_writer tls_writer;
+        uint8_t tls_buffer[HERE_TRACKING_HTTP_TLS_BUFFER_SIZE];
+        uint8_t oauth_buffer[HERE_TRACKING_OAUTH_MIN_OUT_SIZE];
+        uint32_t oauth_size = HERE_TRACKING_OAUTH_MIN_OUT_SIZE;
         here_tracking_http_auth_data auth_data;
 
-        TRY((here_tracking_data_buffer_init(&data_buf,
-                                            here_tracking_http_work_buf,
-                                            HERE_TRACKING_HTTP_WORK_BUF_SIZE)));
-        TRY((here_tracking_data_buffer_add_string(&data_buf, here_tracking_http_method_post)));
-        TRY((here_tracking_data_buffer_add_char(&data_buf, ' ')));
-        TRY((here_tracking_data_buffer_add_string(&data_buf,
-                                                  here_tracking_http_device_http_version)));
-        TRY((here_tracking_data_buffer_add_string(&data_buf,
-                                                  here_tracking_http_device_http_token)));
-        TRY((here_tracking_data_buffer_add_char(&data_buf, ' ')));
-        TRY((here_tracking_data_buffer_add_string(&data_buf, here_tracking_http_version)));
-        TRY((here_tracking_data_buffer_add_string(&data_buf, here_tracking_http_crlf)));
+        TRY((here_tracking_tls_writer_init(&tls_writer,
+                                           client->tls,
+                                           tls_buffer,
+                                           HERE_TRACKING_HTTP_TLS_BUFFER_SIZE)));
 
-        /* HTTP headers */
-        HERE_TRACKING_HTTP_ADD_HEADER(&data_buf, here_tracking_http_header_host, client->base_url);
-        HERE_TRACKING_HTTP_ADD_HEADER(&data_buf,
-                                      here_tracking_http_header_connection,
-                                      here_tracking_http_connection_close);
-        HERE_TRACKING_HTTP_ADD_HEADER(&data_buf, here_tracking_http_header_content_length, "0");
-        TRY((here_tracking_data_buffer_add_string(&data_buf,
-                                                  here_tracking_http_header_authorization)));
-        TRY((here_tracking_data_buffer_add_char(&data_buf, ':')));
-        size = data_buf.buffer_capacity - data_buf.buffer_size;
+        /* HTTP request line */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_method_post)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer,
+                                                   here_tracking_http_path_version)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer,
+                                                   here_tracking_http_path_token)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_version)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
+
+        /* Host header */
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                        here_tracking_http_header_host,
+                                        client->base_url);
+
+        /* Connection header */
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                        here_tracking_http_header_connection,
+                                        here_tracking_http_connection_close);
+
+        /* Content length header */
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer, here_tracking_http_header_content_length, "0");
+
+        /* Authorization header */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer,
+                                                   here_tracking_http_header_authorization)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ':')));
         TRY((here_tracking_oauth_create_header(client->device_id,
                                                client->device_secret,
                                                client->base_url,
                                                client->srv_time_diff,
-                                               (data_buf.buffer + data_buf.buffer_size),
-                                               &size)));
-        data_buf.buffer_size += size;
-        /* Complete header section and send the request */
-        TRY((here_tracking_data_buffer_add_string(&data_buf, here_tracking_http_crlf)));
-        TRY((here_tracking_data_buffer_add_string(&data_buf, here_tracking_http_crlf)));
-        TRY((here_tracking_http_send_req(client, data_buf.buffer, data_buf.buffer_size)));
+                                               (char*)oauth_buffer,
+                                               &oauth_size)));
+        TRY((here_tracking_tls_writer_write_data(&tls_writer, oauth_buffer, oauth_size)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
+
+        /* Complete header section */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
+
+        /* Flush remaining data */
+        TRY((here_tracking_tls_writer_flush(&tls_writer)));
 
         /* Finally set up response handler and read the response */
         here_tracking_http_auth_data_init(&auth_data, client);
         err = here_tracking_http_recv_resp(client,
+                                           tls_buffer,
+                                           HERE_TRACKING_HTTP_TLS_BUFFER_SIZE,
                                            here_tracking_http_auth_resp_cb,
                                            (void*)(&auth_data));
 
@@ -226,89 +247,231 @@ here_tracking_error here_tracking_http_send(here_tracking_client* client,
                                             uint32_t send_size,
                                             uint32_t recv_size)
 {
-    here_tracking_error err = here_tracking_http_connect(client);
+    here_tracking_error err;
+    here_tracking_http_send_recv_ctx send_recv_ctx;
+
+    send_recv_ctx.body_size = 0;
+    send_recv_ctx.send_data = (uint8_t*)data;
+    send_recv_ctx.send_data_size = send_size;
+    send_recv_ctx.status_code = HERE_TRACKING_OK;
+    TRY((here_tracking_data_buffer_init(&send_recv_ctx.resp_buffer, data, recv_size)));
+    err = here_tracking_http_send_stream(client,
+                                   here_tracking_http_send_cb,
+                                   here_tracking_http_recv_cb,
+                                   HERE_TRACKING_RESP_WITH_DATA,
+                                   &send_recv_ctx);
+
+    if(client->data_cb != NULL)
+    {
+        if(send_recv_ctx.status_code == HERE_TRACKING_ERROR_BUFFER_TOO_SMALL)
+        {
+            client->data_cb(HERE_TRACKING_ERROR_BUFFER_TOO_SMALL,
+                            send_recv_ctx.resp_buffer.buffer,
+                            send_recv_ctx.body_size,
+                            client->data_cb_user_data);
+        }
+        else
+        {
+            client->data_cb(send_recv_ctx.status_code,
+                            send_recv_ctx.resp_buffer.buffer,
+                            send_recv_ctx.resp_buffer.buffer_size,
+                            client->data_cb_user_data);
+        }
+    }
+
+here_tracking_http_error:
+    return err;
+}
+
+/**************************************************************************************************/
+
+here_tracking_error here_tracking_http_send_stream(here_tracking_client* client,
+                                             here_tracking_send_cb send_cb,
+                                             here_tracking_recv_cb recv_cb,
+                                             here_tracking_resp_type resp_type,
+                                             void* user_data)
+{
+    here_tracking_error err = here_tracking_http_connect(client,
+                                                         client->base_url,
+                                                         HERE_TRACKING_HTTP_PORT_HTTPS);
 
     if(err == HERE_TRACKING_OK)
     {
-        here_tracking_data_buffer header_buf;
-        here_tracking_http_send_data send_data;
+        here_tracking_tls_writer tls_writer;
+        uint8_t tls_buffer[HERE_TRACKING_HTTP_TLS_BUFFER_SIZE];
+        here_tracking_http_recv_ctx recv_ctx;
+        uint8_t* data;
+        size_t data_size;
 
-        TRY((here_tracking_data_buffer_init(&header_buf,
-                                            here_tracking_http_work_buf,
-                                            HERE_TRACKING_HTTP_WORK_BUF_SIZE)));
+        TRY((here_tracking_tls_writer_init(&tls_writer,
+                                           client->tls,
+                                           tls_buffer,
+                                           HERE_TRACKING_HTTP_TLS_BUFFER_SIZE)));
 
         /* HTTP request line */
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_method_post)));
-        TRY((here_tracking_data_buffer_add_char(&header_buf, ' ')));
-        TRY((here_tracking_data_buffer_add_string(&header_buf,
-                                                  here_tracking_http_device_http_version)));
-        TRY((here_tracking_data_buffer_add_char(&header_buf, '/')));
-        TRY((here_tracking_data_buffer_add_char(&header_buf, ' ')));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_version)));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_crlf)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_method_post)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer,
+                                                   here_tracking_http_path_version)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, '/')));
+
+        if(resp_type == HERE_TRACKING_RESP_STATUS_ONLY)
+        {
+            TRY((here_tracking_tls_writer_write_string(&tls_writer,
+                                                       here_tracking_http_query_async)));
+        }
+
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_version)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
 
         /* HTTP headers */
-        HERE_TRACKING_HTTP_ADD_HEADER(&header_buf,
-                                      here_tracking_http_header_host,
-                                      client->base_url);
-        HERE_TRACKING_HTTP_ADD_HEADER(&header_buf,
-                                      here_tracking_http_header_connection,
-                                      here_tracking_http_connection_close);
-        HERE_TRACKING_HTTP_ADD_HEADER(&header_buf,
-                                      here_tracking_http_header_content_type,
-                                      here_tracking_http_application_json);
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                        here_tracking_http_header_host,
+                                        client->base_url);
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                        here_tracking_http_header_connection,
+                                        here_tracking_http_connection_close);
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                        here_tracking_http_header_content_type,
+                                        here_tracking_http_application_json);
+        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                        here_tracking_http_header_transfer_encoding,
+                                        here_tracking_http_transfer_encoding_chunked);
 
         /* Construct authorization header */
-        TRY((here_tracking_data_buffer_add_string(&header_buf,
-                                                  here_tracking_http_header_authorization)));
-        TRY((here_tracking_data_buffer_add_char(&header_buf, ':')));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_header_bearer)));
-        TRY((here_tracking_data_buffer_add_char(&header_buf, ' ')));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, client->access_token)));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_crlf)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer,
+                                                   here_tracking_http_header_authorization)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ':')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_header_bearer)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, client->access_token)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
 
-        /* Construct content length header */
-        TRY((here_tracking_data_buffer_add_string(&header_buf,
-                                                  here_tracking_http_header_content_length)));
-        TRY((here_tracking_data_buffer_add_char(&header_buf, ':')));
-        TRY((here_tracking_data_buffer_add_utoa(&header_buf, send_size)));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_crlf)));
-        TRY((here_tracking_data_buffer_add_string(&header_buf, here_tracking_http_crlf)));
+        /* Complete header section */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
 
-        /* Send request line + headers */
-        TRY((here_tracking_http_send_req(client, header_buf.buffer, header_buf.buffer_size)));
+        /* Read and send data chunks from io context */
+        do
+        {
+            TRY((send_cb(&data, &data_size, user_data)));
+            TRY((here_tracking_http_send_chunk(&tls_writer, data, data_size)));
+        } while(data != NULL && data_size > 0);
 
-        /* Send request body */
-        TRY((here_tracking_http_send_req(client, data, send_size)));
+        /* Flush remaining data */
+        TRY((here_tracking_tls_writer_flush(&tls_writer)));
 
         /* Finally set up response handler and read the response */
-        send_data.client = client;
-        send_data.status_code = HERE_TRACKING_ERROR;
-        send_data.body_size = 0;
-        TRY((here_tracking_data_buffer_init(&send_data.resp_buffer, data, recv_size)));
-        err = here_tracking_http_recv_resp(client, here_tracking_http_send_resp_cb, &send_data);
+        recv_ctx.client = client;
+        recv_ctx.status_code = HERE_TRACKING_ERROR;
+        recv_ctx.recv_cb = recv_cb;
+        recv_ctx.user_data = user_data;
+
+        err = here_tracking_http_recv_resp(client,
+                                           tls_buffer,
+                                           HERE_TRACKING_HTTP_TLS_BUFFER_SIZE,
+                                           here_tracking_http_send_resp_cb,
+                                           &recv_ctx);
 
         if(err == HERE_TRACKING_ERROR_CLIENT_INTERRUPT)
         {
             err = HERE_TRACKING_OK;
         }
 
-        if(client->data_cb != NULL)
+here_tracking_http_error:
+        here_tracking_tls_close(client->tls);
+    }
+
+    return err;
+}
+
+/**************************************************************************************************/
+
+here_tracking_error here_tracking_http_get(here_tracking_client* client,
+                                           const here_tracking_http_request* request,
+                                           here_tracking_recv_cb recv_cb,
+                                           void* user_data)
+{
+    here_tracking_error err = HERE_TRACKING_ERROR_INVALID_INPUT;
+
+    if(client != NULL &&
+       request != NULL &&
+       request->host != NULL &&
+       request->path != NULL &&
+       recv_cb != NULL)
+    {
+        err = here_tracking_http_connect(client, request->host, request->port);
+    }
+
+    if(err == HERE_TRACKING_OK)
+    {
+        here_tracking_tls_writer tls_writer;
+        uint8_t tls_buffer[HERE_TRACKING_HTTP_TLS_BUFFER_SIZE];
+        here_tracking_http_recv_ctx recv_ctx;
+        uint8_t i;
+
+        TRY((here_tracking_tls_writer_init(&tls_writer,
+                                           client->tls,
+                                           tls_buffer,
+                                           HERE_TRACKING_HTTP_TLS_BUFFER_SIZE)));
+
+        /* HTTP request line */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_method_get)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, request->path)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ' ')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_version)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
+
+        /* HTTP headers */
+
+        /* Construct host header */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_header_host)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ':')));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, request->host)));
+        TRY((here_tracking_tls_writer_write_char(&tls_writer, ':')));
+        TRY((here_tracking_tls_writer_write_utoa(&tls_writer, request->port, 10)));
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
+
+        /* User defined headers */
+        for(i = 0; i < request->header_count; ++i)
         {
-            if(send_data.status_code == HERE_TRACKING_ERROR_BUFFER_TOO_SMALL)
+            here_tracking_http_header* header = (request->headers + i);
+
+            /* Special handling for authorization header */
+            if(strcmp(header->name, here_tracking_http_header_authorization) == 0)
             {
-                client->data_cb(HERE_TRACKING_ERROR_BUFFER_TOO_SMALL,
-                                send_data.resp_buffer.buffer,
-                                send_data.body_size,
-                                client->data_cb_user_data);
+                here_tracking_http_get_write_auth_header(&tls_writer, header);
             }
             else
             {
-                client->data_cb(send_data.status_code,
-                                send_data.resp_buffer.buffer,
-                                send_data.resp_buffer.buffer_size,
-                                client->data_cb_user_data);
+                HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                                request->headers[i].name,
+                                                request->headers[i].value);
             }
+        }
+
+        /* Complete header section */
+        TRY((here_tracking_tls_writer_write_string(&tls_writer, here_tracking_http_crlf)));
+
+        /* Flush remaining data */
+        TRY((here_tracking_tls_writer_flush(&tls_writer)));
+
+        /* Finally set up response handler and read the response */
+        recv_ctx.client = client;
+        recv_ctx.status_code = HERE_TRACKING_ERROR;
+        recv_ctx.recv_cb = recv_cb;
+        recv_ctx.user_data = user_data;
+
+        err = here_tracking_http_recv_resp(client,
+                                           tls_buffer,
+                                           HERE_TRACKING_HTTP_TLS_BUFFER_SIZE,
+                                           here_tracking_http_send_resp_cb,
+                                           &recv_ctx);
+
+        if(err == HERE_TRACKING_ERROR_CLIENT_INTERRUPT)
+        {
+            err = HERE_TRACKING_OK;
         }
 
 here_tracking_http_error:
@@ -500,36 +663,61 @@ static bool here_tracking_http_send_resp_cb(const here_tracking_http_parser_evt*
                                             bool last,
                                             void* cb_data)
 {
-    here_tracking_http_send_data* send_data = (here_tracking_http_send_data*)cb_data;
+    here_tracking_http_recv_ctx* recv_ctx = (here_tracking_http_recv_ctx*)cb_data;
     bool res = false;
 
     switch(evt->id)
     {
         case HERE_TRACKING_HTTP_PARSER_EVT_STATUS_CODE:
         {
-            send_data->status_code = here_tracking_http_status_code_to_err(evt->data.status_code);
+            recv_ctx->status_code = here_tracking_http_status_code_to_err(evt->data.status_code);
         }
         break;
 
         case HERE_TRACKING_HTTP_PARSER_EVT_BODY:
         {
-            if(here_tracking_data_buffer_add_data(&send_data->resp_buffer,
-                                                  evt->data.body.buffer,
-                                                  evt->data.body.buffer_size) != HERE_TRACKING_OK)
+            here_tracking_recv_data data;
+
+            data.err = HERE_TRACKING_OK;
+            data.evt = HERE_TRACKING_RECV_EVT_RESP_DATA;
+            data.data = (uint8_t*)evt->data.body.buffer;
+            data.data_size = evt->data.body.buffer_size;
+
+            if(recv_ctx->recv_cb(&data, recv_ctx->user_data) != HERE_TRACKING_OK)
             {
-                here_tracking_data_buffer_add_data(&send_data->resp_buffer,
-                                                   evt->data.body.buffer,
-                                                   (send_data->resp_buffer.buffer_capacity -
-                                                    send_data->resp_buffer.buffer_size));
-                send_data->status_code = HERE_TRACKING_ERROR_BUFFER_TOO_SMALL;
                 res = true;
+                break;
+            }
+
+            if(last)
+            {
+                data.err = recv_ctx->status_code;
+                data.evt = HERE_TRACKING_RECV_EVT_RESP_COMPLETE;
+                data.data = NULL;
+                data.data_size = 0;
+                recv_ctx->recv_cb(&data, recv_ctx->user_data);
             }
         }
         break;
 
         case HERE_TRACKING_HTTP_PARSER_EVT_BODY_SIZE:
         {
-            send_data->body_size = evt->data.body_size;
+            here_tracking_recv_data data;
+
+            data.err = HERE_TRACKING_OK;
+            data.evt = HERE_TRACKING_RECV_EVT_RESP_SIZE;
+            data.data = NULL;
+            data.data_size = evt->data.body_size;
+            recv_ctx->recv_cb(&data, recv_ctx->user_data);
+
+            if(evt->data.body_size == 0)
+            {
+                data.err = recv_ctx->status_code;
+                data.evt = HERE_TRACKING_RECV_EVT_RESP_COMPLETE;
+                data.data = NULL;
+                data.data_size = 0;
+                recv_ctx->recv_cb(&data, recv_ctx->user_data);
+            }
         }
         break;
 
@@ -542,7 +730,9 @@ static bool here_tracking_http_send_resp_cb(const here_tracking_http_parser_evt*
 
 /**************************************************************************************************/
 
-static here_tracking_error here_tracking_http_connect(here_tracking_client* client)
+static here_tracking_error here_tracking_http_connect(here_tracking_client* client,
+                                                      const char* host,
+                                                      uint16_t port)
 {
     here_tracking_error err = HERE_TRACKING_OK;
 
@@ -553,9 +743,7 @@ static here_tracking_error here_tracking_http_connect(here_tracking_client* clie
 
     if(err == HERE_TRACKING_OK)
     {
-        err = here_tracking_tls_connect(client->tls,
-                                        client->base_url,
-                                        HERE_TRACKING_HTTP_PORT_HTTPS);
+        err = here_tracking_tls_connect(client->tls, host, port);
     }
 
     return err;
@@ -563,58 +751,37 @@ static here_tracking_error here_tracking_http_connect(here_tracking_client* clie
 
 /**************************************************************************************************/
 
-static here_tracking_error here_tracking_http_send_req(here_tracking_client* client,
-                                                       const char* req,
-                                                       uint32_t req_size)
+static here_tracking_error here_tracking_http_recv_resp(here_tracking_client* client,
+                                                        uint8_t* recv_buffer,
+                                                        size_t recv_buffer_size,
+                                                        here_tracking_http_parser_evt_cb resp_cb,
+                                                        void* resp_cb_data)
 {
     here_tracking_error err = HERE_TRACKING_OK;
-    uint32_t to_send = req_size;
-
-    while(err == HERE_TRACKING_OK && to_send > 0)
-    {
-        err = here_tracking_tls_write(client->tls, (req + (req_size - to_send)), &to_send);
-
-        if(err == HERE_TRACKING_OK)
-        {
-            to_send = req_size - to_send;
-        }
-    }
-
-    return err;
-}
-
-/**************************************************************************************************/
-
-static here_tracking_error \
-    here_tracking_http_recv_resp(here_tracking_client* client,
-                                 here_tracking_http_parser_evt_cb resp_cb,
-                                 void* resp_cb_data)
-{
-    here_tracking_error err = HERE_TRACKING_OK;
-    uint32_t size = HERE_TRACKING_HTTP_WORK_BUF_SIZE, parse_size, pos = 0;
+    uint32_t size = (uint32_t)recv_buffer_size, parse_size, pos = 0;
     here_tracking_http_parser parser;
 
-    TRY((here_tracking_tls_read(client->tls, here_tracking_http_work_buf, &size)));
+    TRY((here_tracking_tls_read(client->tls, (char*)recv_buffer, &size)));
     here_tracking_http_parser_init(&parser, resp_cb, resp_cb_data);
     parse_size = size;
-    err = here_tracking_http_parser_parse(&parser, here_tracking_http_work_buf, &parse_size);
+    err = here_tracking_http_parser_parse(&parser, (char*)recv_buffer, &parse_size);
 
-    while(err == HERE_TRACKING_ERROR_NEED_MORE_DATA && size < HERE_TRACKING_HTTP_WORK_BUF_SIZE)
+    while(err == HERE_TRACKING_ERROR_NEED_MORE_DATA && (size < recv_buffer_size || parse_size > 0))
     {
         /* Move data that hasn't been parsed to the beginning of the work buffer */
-        memmove(here_tracking_http_work_buf,
-                (here_tracking_http_work_buf + parse_size),
+        memmove(recv_buffer,
+                (recv_buffer + parse_size),
                 size - parse_size);
 
         pos = size - parse_size; /* Free space starts in this position */
-        size = HERE_TRACKING_HTTP_WORK_BUF_SIZE - pos; /* Free space available */
+        size = recv_buffer_size - pos; /* Free space available */
 
         /* Read more data to the free space in work buffer */
-        TRY((here_tracking_tls_read(client->tls, here_tracking_http_work_buf + pos, &size)));
+        TRY((here_tracking_tls_read(client->tls, ((char*)recv_buffer) + pos, &size)));
 
         size = parse_size = pos + size; /* Size of unparsed data in the work buffer */
 
-        err = here_tracking_http_parser_parse(&parser, here_tracking_http_work_buf, &parse_size);
+        err = here_tracking_http_parser_parse(&parser, ((char*)recv_buffer), &parse_size);
     }
 
     /* Parser requires more data to continue but work buffer is already full. */
@@ -675,6 +842,8 @@ static here_tracking_error here_tracking_http_status_code_to_err(uint16_t http_s
     switch(http_status_code)
     {
         case HERE_TRACKING_HTTP_STATUS_OK:
+            /* fall through */
+        case HERE_TRACKING_HTTP_STATUS_NO_CONTENT:
         {
             err = HERE_TRACKING_OK;
         }
@@ -698,6 +867,12 @@ static here_tracking_error here_tracking_http_status_code_to_err(uint16_t http_s
         }
         break;
 
+        case HERE_TRACKING_HTTP_STATUS_NOT_FOUND:
+        {
+            err = HERE_TRACKING_ERROR_NOT_FOUND;
+        }
+        break;
+
         case HERE_TRACKING_HTTP_STATUS_PRECONDITION_FAILED:
         {
             err = HERE_TRACKING_ERROR_DEVICE_UNCLAIMED;
@@ -711,5 +886,123 @@ static here_tracking_error here_tracking_http_status_code_to_err(uint16_t http_s
         break;
     }
 
+    return err;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_http_send_chunk(here_tracking_tls_writer* tls_writer,
+                                                         const uint8_t* chunk_data,
+                                                         size_t chunk_size)
+{
+    here_tracking_error err = HERE_TRACKING_OK;
+
+    TRY((here_tracking_tls_writer_write_utoa(tls_writer, (uint32_t)chunk_size, 16)));
+    TRY((here_tracking_tls_writer_write_string(tls_writer, here_tracking_http_crlf)));
+
+    if(chunk_data != NULL && chunk_size > 0)
+    {
+        TRY((here_tracking_tls_writer_write_data(tls_writer, chunk_data, chunk_size)));
+    }
+
+    TRY((here_tracking_tls_writer_write_string(tls_writer, here_tracking_http_crlf)));
+
+here_tracking_http_error:
+    return err;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_http_send_cb(uint8_t** data,
+                                                      size_t* data_size,
+                                                      void* user_data)
+{
+    here_tracking_http_send_recv_ctx* send_recv_ctx = (here_tracking_http_send_recv_ctx*)user_data;
+
+    if(send_recv_ctx->send_data != NULL && send_recv_ctx->send_data_size > 0)
+    {
+        *data = send_recv_ctx->send_data;
+        *data_size = send_recv_ctx->send_data_size;
+        send_recv_ctx->send_data = NULL;
+        send_recv_ctx->send_data_size = 0;
+    }
+    else
+    {
+        *data = NULL;
+        *data_size = 0;
+    }
+
+    return HERE_TRACKING_OK;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_http_recv_cb(const here_tracking_recv_data* data,
+                                                      void* user_data)
+{
+    here_tracking_http_send_recv_ctx* send_recv_ctx = (here_tracking_http_send_recv_ctx*)user_data;
+
+    switch(data->evt)
+    {
+        case HERE_TRACKING_RECV_EVT_RESP_SIZE:
+        {
+            send_recv_ctx->body_size = data->data_size;
+        }
+        break;
+
+        case HERE_TRACKING_RECV_EVT_RESP_DATA:
+        {
+            if(here_tracking_data_buffer_add_data(&send_recv_ctx->resp_buffer,
+                                                  (const char*)data->data,
+                                                  (uint32_t)data->data_size) != HERE_TRACKING_OK)
+            {
+                here_tracking_data_buffer_add_data(&send_recv_ctx->resp_buffer,
+                                                   (const char*)data->data,
+                                                   (send_recv_ctx->resp_buffer.buffer_capacity -
+                                                    send_recv_ctx->resp_buffer.buffer_size));
+                send_recv_ctx->status_code = HERE_TRACKING_ERROR_BUFFER_TOO_SMALL;
+            }
+        }
+        break;
+
+        case HERE_TRACKING_RECV_EVT_RESP_COMPLETE:
+        {
+            send_recv_ctx->status_code = data->err;
+        }
+        break;
+
+        default:
+            send_recv_ctx->status_code = HERE_TRACKING_ERROR;
+            break;
+    }
+
+    return send_recv_ctx->status_code;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error \
+    here_tracking_http_get_write_auth_header(here_tracking_tls_writer* tls_writer,
+                                             const here_tracking_http_header* auth_header)
+{
+    here_tracking_error err;
+
+    TRY((here_tracking_tls_writer_write_string(tls_writer,
+                                               here_tracking_http_header_authorization)));
+    TRY((here_tracking_tls_writer_write_char(tls_writer, ':')));
+
+    /* Make sure that 'Bearer' token type is set */
+    if(strncmp(auth_header->value,
+               here_tracking_http_header_bearer,
+               strlen(here_tracking_http_header_bearer)) != 0)
+    {
+        TRY((here_tracking_tls_writer_write_string(tls_writer, here_tracking_http_header_bearer)));
+        TRY((here_tracking_tls_writer_write_char(tls_writer, ' ')));
+    }
+
+    TRY((here_tracking_tls_writer_write_string(tls_writer, auth_header->value)));
+    TRY((here_tracking_tls_writer_write_string(tls_writer, here_tracking_http_crlf)));
+
+here_tracking_http_error:
     return err;
 }
