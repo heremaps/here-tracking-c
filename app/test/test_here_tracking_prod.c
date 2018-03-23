@@ -167,6 +167,36 @@ static here_tracking_error test_here_tracking_prod_recv_ok_cb(const here_trackin
 
 /**************************************************************************************************/
 
+static here_tracking_error test_here_tracking_prod_recv_error_cb(const here_tracking_recv_data* data,
+                                                                 void* user_data)
+{
+    if(data->evt == HERE_TRACKING_RECV_EVT_RESP_SIZE)
+    {
+        ck_assert_int_eq(data->err, HERE_TRACKING_OK);
+        ck_assert_uint_eq(test_here_tracking_prod_recv_data_cb_called, 0);
+        ck_assert_uint_gt(data->data_size, 0);
+    }
+    else if(data->evt == HERE_TRACKING_RECV_EVT_RESP_DATA)
+    {
+        ck_assert_int_eq(data->err, HERE_TRACKING_OK);
+        ck_assert_uint_gt(test_here_tracking_prod_recv_data_cb_called, 0);
+        ck_assert_uint_gt(data->data_size, 0);
+        ck_assert_ptr_ne(data->data, NULL);
+        test_here_tracking_prod_recv_data_cb_size += data->data_size;
+    }
+    else if(data->evt == HERE_TRACKING_RECV_EVT_RESP_COMPLETE)
+    {
+        ck_assert_int_ne(data->err, HERE_TRACKING_OK);
+        ck_assert_uint_ge(test_here_tracking_prod_recv_data_cb_called, 1);
+        test_here_tracking_prod_recv_data_cb_status = data->err;
+    }
+
+    test_here_tracking_prod_recv_data_cb_called++;
+    return HERE_TRACKING_OK;
+}
+
+/**************************************************************************************************/
+
 START_TEST(test_here_tracking_prod_send_ok)
 {
     here_tracking_client client;
@@ -360,6 +390,41 @@ END_TEST
 
 /**************************************************************************************************/
 
+START_TEST(test_here_tracking_prod_send_stream_invalid_token)
+{
+    here_tracking_client client;
+
+    here_tracking_error res = here_tracking_init(&client,
+                                                 HERE_TRACKING_TEST_DEVICE_ID,
+                                                 HERE_TRACKING_TEST_DEVICE_SECRET,
+                                                 base_url);
+
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    res = here_tracking_auth(&client);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_uint_gt(strlen(client.access_token), 0);
+    ck_assert_uint_gt(client.token_expiry, 0);
+    memset(client.access_token, 'A', strlen(client.access_token));
+    INIT_RECV_CB_DATA;
+    res = here_tracking_send_stream(&client,
+                              test_here_tracking_prod_send_ok_cb,
+                              test_here_tracking_prod_recv_error_cb,
+                              HERE_TRACKING_RESP_WITH_DATA,
+                              NULL);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_uint_ge(test_here_tracking_prod_recv_data_cb_called, 3);
+    ck_assert_int_eq(test_here_tracking_prod_recv_data_cb_status, HERE_TRACKING_ERROR_UNAUTHORIZED);
+    ck_assert_uint_gt(test_here_tracking_prod_recv_data_cb_size, 0);
+    ck_assert_str_eq(client.access_token, "");
+    ck_assert_uint_eq(client.token_expiry, 0);
+    here_tracking_free(&client);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_ptr_eq(client.tls, NULL);
+}
+END_TEST
+
+/**************************************************************************************************/
+
 Suite* test_here_tracking_prod_suite(void)
 {
     Suite* s = suite_create(TEST_NAME);
@@ -370,6 +435,7 @@ Suite* test_here_tracking_prod_suite(void)
     tcase_add_test(tc, test_here_tracking_prod_send_ok_expired_token);
     tcase_add_test(tc, test_here_tracking_prod_send_invalid_data);
     tcase_add_test(tc, test_here_tracking_prod_send_stream_ok);
+    tcase_add_test(tc, test_here_tracking_prod_send_stream_invalid_token);
     suite_add_tcase(s, tc);
     return s;
 }

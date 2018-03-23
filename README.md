@@ -135,6 +135,6 @@ To enable log messages, set `HERE_TRACKING_LOG_LEVEL` to the desired level and r
 If you need assistance with this or any other HERE product, contact your HERE representative.
 
 ## License
-Copyright (c) 2017 HERE Europe B.V.
+Copyright (c) 2017-2018 HERE Europe B.V.
 
 See the [LICENSE](./LICENSE) file in the root of this project for license details.

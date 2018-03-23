@@ -36,12 +36,12 @@
 
 #define HERE_TRACKING_VERSION_MINOR 1 /**< @brief Minor version number */
 
-#define HERE_TRACKING_VERSION_PATCH 0 /**< @brief Patch version number */
+#define HERE_TRACKING_VERSION_PATCH 1 /**< @brief Patch version number */
 
 /**
  * @brief Version string in format "Major.Minor.Patch".
  */
-#define HERE_TRACKING_VERSION_STRING "1.1.0"
+#define HERE_TRACKING_VERSION_STRING "1.1.1"
 
 /**
  * @brief Get major version number

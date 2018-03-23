@@ -116,6 +116,13 @@ here_tracking_error here_tracking_tls_init(here_tracking_tls* tls)
 
             if(res == 0)
             {
+                res = mbedtls_x509_crt_parse(&(tls_ctx->crt_ctx),
+                                    (unsigned char*)here_tracking_tls_cert_digicert_global_root_g2,
+                                    strlen(here_tracking_tls_cert_digicert_global_root_g2) + 1);
+            }
+
+            if(res == 0)
+            {
                 *tls = (here_tracking_tls)tls_ctx;
                 err = HERE_TRACKING_OK;
             }

@@ -840,9 +840,11 @@ START_TEST(test_here_tracking_http_send_unauthorized)
     client.data_cb = test_here_tracking_http_recv_data_cb_err;
     strcpy(client.access_token, fake_access_token);
     err = here_tracking_http_send(&client, data, data_size, data_size);
-    ck_assert(err == HERE_TRACKING_OK);
-    ck_assert(test_here_tracking_http_recv_data_cb_called == 1);
-    ck_assert(test_here_tracking_http_recv_data_cb_status == HERE_TRACKING_ERROR_UNAUTHORIZED);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 1);
+    ck_assert_int_eq(test_here_tracking_http_recv_data_cb_status, HERE_TRACKING_ERROR_UNAUTHORIZED);
+    ck_assert_str_eq(client.access_token, "");
+    ck_assert_uint_eq(client.token_expiry, 0);
 }
 END_TEST
 
@@ -861,9 +863,11 @@ START_TEST(test_here_tracking_http_send_forbidden)
     client.data_cb = test_here_tracking_http_recv_data_cb_err;
     strcpy(client.access_token, fake_access_token);
     err = here_tracking_http_send(&client, data, data_size, data_size);
-    ck_assert(err == HERE_TRACKING_OK);
-    ck_assert(test_here_tracking_http_recv_data_cb_called == 1);
-    ck_assert(test_here_tracking_http_recv_data_cb_status == HERE_TRACKING_ERROR_FORBIDDEN);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 1);
+    ck_assert_int_eq(test_here_tracking_http_recv_data_cb_status, HERE_TRACKING_ERROR_FORBIDDEN);
+    ck_assert_str_eq(client.access_token, "");
+    ck_assert_uint_eq(client.token_expiry, 0);
 }
 END_TEST
 

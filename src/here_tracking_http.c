@@ -378,6 +378,13 @@ here_tracking_error here_tracking_http_send_stream(here_tracking_client* client,
             err = HERE_TRACKING_OK;
         }
 
+        if(recv_ctx.status_code == HERE_TRACKING_ERROR_UNAUTHORIZED ||
+           recv_ctx.status_code == HERE_TRACKING_ERROR_FORBIDDEN)
+        {
+            client->access_token[0] = '\0';
+            client->token_expiry = 0;
+        }
+
 here_tracking_http_error:
         here_tracking_tls_close(client->tls);
     }

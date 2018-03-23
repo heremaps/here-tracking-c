@@ -28,4 +28,6 @@
 
 extern const char* here_tracking_tls_cert_verisign_universal_root;
 
+extern const char* here_tracking_tls_cert_digicert_global_root_g2;
+
 #endif /* HERE_TRACKING_TLS_CERT_H */

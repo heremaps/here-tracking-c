@@ -166,7 +166,7 @@ END_TEST
 
 #if defined HERE_TRACKING_TEST_DEVICE_ID && defined HERE_TRACKING_TEST_DEVICE_SECRET
 
-START_TEST(test_here_tracking_http_online_get_with_auth_ok)
+START_TEST(test_here_tracking_http_online_get_with_auth_forbidden)
 {
     test_here_tracking_http_online_ctx test_ctx = {0};
     here_tracking_error err;
@@ -204,13 +204,13 @@ START_TEST(test_here_tracking_http_online_get_with_auth_ok)
     ck_assert_uint_ge(test_ctx.recv_evt_resp_data_count, 1);
     ck_assert_uint_eq(test_ctx.recv_evt_resp_complete_count, 1);
     ck_assert_uint_ge(test_ctx.recv_cb_called, 3);
-    ck_assert_int_eq(test_ctx.resp_complete_status, HERE_TRACKING_OK);
+    ck_assert_int_eq(test_ctx.resp_complete_status, HERE_TRACKING_ERROR_FORBIDDEN);
 }
 END_TEST
 
 /**************************************************************************************************/
 
-START_TEST(test_here_tracking_http_online_get_with_auth_bearer_ok)
+START_TEST(test_here_tracking_http_online_get_with_auth_bearer_forbidden)
 {
     test_here_tracking_http_online_ctx test_ctx = {0};
     here_tracking_error err;
@@ -251,7 +251,7 @@ START_TEST(test_here_tracking_http_online_get_with_auth_bearer_ok)
     ck_assert_uint_ge(test_ctx.recv_evt_resp_data_count, 1);
     ck_assert_uint_eq(test_ctx.recv_evt_resp_complete_count, 1);
     ck_assert_uint_ge(test_ctx.recv_cb_called, 3);
-    ck_assert_int_eq(test_ctx.resp_complete_status, HERE_TRACKING_OK);
+    ck_assert_int_eq(test_ctx.resp_complete_status, HERE_TRACKING_ERROR_FORBIDDEN);
 }
 END_TEST
 
@@ -263,8 +263,8 @@ TEST_SUITE_BEGIN(TEST_NAME)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_online_get_ok)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_online_get_not_found)
 #if defined HERE_TRACKING_TEST_DEVICE_ID && defined HERE_TRACKING_TEST_DEVICE_SECRET
-    TEST_SUITE_ADD_TEST(test_here_tracking_http_online_get_with_auth_ok)
-    TEST_SUITE_ADD_TEST(test_here_tracking_http_online_get_with_auth_bearer_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_online_get_with_auth_forbidden)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_online_get_with_auth_bearer_forbidden)
 #endif
 TEST_SUITE_END
 
