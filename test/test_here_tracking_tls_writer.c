@@ -89,6 +89,37 @@ END_TEST
 
 /**************************************************************************************************/
 
+START_TEST(test_here_tracking_tls_writer_write_data_chunks_ok)
+{
+    here_tracking_error err;
+    here_tracking_tls_writer tls_writer;
+    here_tracking_tls tls_ctx;
+    static const uint8_t buffer_size = 10;
+    uint8_t buffer[buffer_size];
+    static const uint8_t data_size = 15;
+    uint8_t data[data_size];
+    here_tracking_error add_data_res[3] =
+    {
+        HERE_TRACKING_OK,
+        HERE_TRACKING_ERROR_BUFFER_TOO_SMALL,
+        HERE_TRACKING_OK
+    };
+
+    TEST_HERE_TRACKING_TLS_WRITER_INIT_OK(&tls_writer, tls_ctx, buffer, buffer_size);
+    SET_RETURN_SEQ(here_tracking_data_buffer_add_data, add_data_res, 3);
+    err = here_tracking_tls_writer_write_data(&tls_writer, data, buffer_size);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    /* Buffer should be flushed after write to full capacity. */
+    ck_assert_uint_eq(HERE_TRACKING_DATA_BUFFER_BYTES_FREE(&tls_writer.data_buffer), buffer_size);
+    err = here_tracking_tls_writer_write_data(&tls_writer, data, data_size);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    /* Buffer not filled to capacity, there should be data remaining in the write buffer */
+    ck_assert_uint_lt(HERE_TRACKING_DATA_BUFFER_BYTES_FREE(&tls_writer.data_buffer), buffer_size);
+}
+END_TEST
+
+/**************************************************************************************************/
+
 START_TEST(test_here_tracking_tls_writer_init_invalid_input)
 {
     here_tracking_error err;
@@ -290,15 +321,16 @@ START_TEST(test_here_tracking_tls_writer_flush_write_fail)
     here_tracking_error err;
     here_tracking_tls_writer tls_writer;
     here_tracking_tls tls_ctx;
-    uint8_t buffer[10];
-    uint8_t data[10];
+    static const uint8_t buffer_size = 10;
+    uint8_t buffer[buffer_size];
+    uint8_t data[buffer_size - 1];
 
-    TEST_HERE_TRACKING_TLS_WRITER_INIT_OK(&tls_writer, tls_ctx, buffer, 10);
-    err = here_tracking_tls_writer_write_data(&tls_writer, data, 10);
-    ck_assert(err == HERE_TRACKING_OK);
+    TEST_HERE_TRACKING_TLS_WRITER_INIT_OK(&tls_writer, tls_ctx, buffer, buffer_size);
+    err = here_tracking_tls_writer_write_data(&tls_writer, data, buffer_size - 1);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
     here_tracking_tls_write_fake.return_val = HERE_TRACKING_ERROR;
     err = here_tracking_tls_writer_flush(&tls_writer);
-    ck_assert(err == HERE_TRACKING_ERROR);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
 }
 END_TEST
 
@@ -308,6 +340,7 @@ TEST_SUITE_BEGIN(TEST_NAME)
     TEST_SUITE_ADD_SETUP_TEARDOWN_FN(test_here_tracking_tls_writer_tc_setup, NULL)
     TEST_SUITE_ADD_TEST(test_here_tracking_tls_writer_init_ok)
     TEST_SUITE_ADD_TEST(test_here_tracking_tls_writer_init_invalid_input)
+    TEST_SUITE_ADD_TEST(test_here_tracking_tls_writer_write_data_chunks_ok)
     TEST_SUITE_ADD_TEST(test_here_tracking_tls_writer_write_data_invalid_input)
     TEST_SUITE_ADD_TEST(test_here_tracking_tls_writer_write_data_add_data_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_tls_writer_write_data_add_data_fail2)

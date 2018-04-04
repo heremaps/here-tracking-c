@@ -94,6 +94,11 @@ here_tracking_error here_tracking_tls_writer_write_data(here_tracking_tls_writer
             {
                 pos += data_size;
                 data_size = 0;
+
+                if(HERE_TRACKING_DATA_BUFFER_BYTES_FREE(&writer->data_buffer) == 0)
+                {
+                    err = here_tracking_tls_writer_flush(writer);
+                }
             }
         }
     }
