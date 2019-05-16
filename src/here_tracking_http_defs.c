@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -24,7 +24,13 @@
 
 const char* here_tracking_http_connection_close          = "close";
 
+const char* here_tracking_http_content_type_json         = "application/json";
+
+const char* here_tracking_http_content_type_octet_stream = "application/octet-stream";
+
 const char* here_tracking_http_crlf                      = "\r\n";
+
+const char* here_tracking_http_header_accept             = "Accept";
 
 const char* here_tracking_http_header_authorization      = "Authorization";
 
@@ -32,7 +38,11 @@ const char* here_tracking_http_header_connection         = "Connection";
 
 const char* here_tracking_http_header_content_length     = "Content-Length";
 
+const char* here_tracking_http_header_content_type       = "Content-Type";
+
 const char* here_tracking_http_header_transfer_encoding  = "Transfer-Encoding";
+
+const char* here_tracking_http_header_user_agent         = "User-Agent";
 
 const char* here_tracking_http_method_get                = "GET";
 

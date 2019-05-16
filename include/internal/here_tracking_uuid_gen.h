@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
+ * Copyright (C) 2018 HERE Europe B.V.                                                            *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,32 +22,37 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#ifndef HERE_TRACKING_UTILS_H
-#define HERE_TRACKING_UTILS_H
+#ifndef HERE_TRACKING_UUID_GEN_H
+#define HERE_TRACKING_UUID_GEN_H
 
-#include <stdbool.h>
-#include <stdint.h>
+#include <stddef.h>
+
+#include "here_tracking_error.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int32_t here_tracking_utils_atoi(const char* str, size_t n);
+/**
+ * @brief Size of UUIDv4 string in bytes, including the 0-terminator.
+ */
+#define HERE_TRACKING_UUID_SIZE 37
 
-uint32_t here_tracking_utils_atou(const char* str, size_t n);
-
-bool here_tracking_utils_isalnum(const char c);
-
-bool here_tracking_utils_isalpha(const char c);
-
-bool here_tracking_utils_isdigit(const char c);
-
-int32_t here_tracking_utils_memcasecmp(const uint8_t* b1, const uint8_t* b2, size_t n);
-
-int32_t here_tracking_utils_strcasecmp(const char* s1, const char* s2);
+/**
+ * @brief Generates a new UUIDv4 string.
+ *
+ * @param[out] buf Buffer for the generated UUID.
+ * @param[in] buf_size Size of the provided buffer in bytes.
+ *                     Must be at least HERE_TRACKING_UUID_SIZE.
+ * @return ::HERE_TRACKING_OK UUID created successfully.
+ * @return ::HERE_TRACKING_ERROR_INVALID_INPUT Provided buffer is NULL.
+ * @return ::HERE_TRACKING_ERROR_BUFFER_TOO_SMALL Provided buffer is too small.
+ * @return ::HERE_TRACKING_ERROR Unknown error.
+ */
+here_tracking_error here_tracking_uuid_gen_new(char* buf, size_t buf_size);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* HERE_TRACKING_UTILS_H */
+#endif /* HERE_TRACKING_UUID_GEN_H */

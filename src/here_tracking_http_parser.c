@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,7 +22,6 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "here_tracking_http.h"
@@ -224,8 +223,10 @@ static here_tracking_error \
                         here_tracking_http_parser_evt evt;
 
                         evt.id = HERE_TRACKING_HTTP_PARSER_EVT_VERSION;
-                        evt.data.version.major = atoi(data + major_pos);
-                        evt.data.version.minor = atoi(data + minor_pos);
+                        evt.data.version.major =
+                            here_tracking_utils_atou(data + major_pos, minor_pos - major_pos - 1);
+                        evt.data.version.minor =
+                            here_tracking_utils_atou(data + minor_pos, pos - minor_pos);
                         (*data_size) = pos + 1;
                         err = parser->cb(&evt, true, parser->cb_data) ?
                             HERE_TRACKING_ERROR_CLIENT_INTERRUPT : HERE_TRACKING_OK;
@@ -280,7 +281,7 @@ static here_tracking_error \
             here_tracking_http_parser_evt evt;
 
             evt.id = HERE_TRACKING_HTTP_PARSER_EVT_STATUS_CODE;
-            evt.data.status_code = atoi(data);
+            evt.data.status_code = here_tracking_utils_atou(data, 3);
             (*data_size) = 4;
             err = parser->cb(&evt, true, parser->cb_data) ?
                 HERE_TRACKING_ERROR_CLIENT_INTERRUPT : HERE_TRACKING_OK;
@@ -461,7 +462,8 @@ static here_tracking_error here_tracking_http_parser_parse_hdr(here_tracking_htt
                                                 (uint8_t*)here_tracking_http_header_content_length,
                                                 hdr->hdr_key_size) == 0)
                         {
-                            parser->content_size = atoi(hdr->hdr_val);
+                            parser->content_size = here_tracking_utils_atou(hdr->hdr_val,
+                                                                            hdr->hdr_val_size);
                             evt.id = HERE_TRACKING_HTTP_PARSER_EVT_BODY_SIZE;
                             evt.data.body_size = (uint32_t)parser->content_size;
                             err = parser->cb(&evt, true, parser->cb_data) ?

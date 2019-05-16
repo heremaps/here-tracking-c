@@ -1,5 +1,5 @@
 /**************************************************************************************************
-* Copyright (C) 2017 HERE Europe B.V.                                                             *
+* Copyright (C) 2017-2019 HERE Europe B.V.                                                        *
 * All rights reserved.                                                                            *
 *                                                                                                 *
 * MIT License                                                                                     *
@@ -44,10 +44,29 @@ void mock_here_tracking_get_unixtime_set_result(uint32_t result)
 
 here_tracking_error mock_here_tracking_get_unixtime_custom(uint32_t* ts)
 {
-    if(here_tracking_get_unixtime_fake.return_val == HERE_TRACKING_OK)
+    here_tracking_error err;
+    here_tracking_get_unixtime_Fake* the_fake = &here_tracking_get_unixtime_fake;
+
+    if(the_fake->return_val_seq_len > 0)
+    {
+        if(the_fake->return_val_seq_idx < the_fake->return_val_seq_len)
+        {
+            err = the_fake->return_val_seq[the_fake->return_val_seq_idx++];
+        }
+        else
+        {
+            err = the_fake->return_val_seq[the_fake->return_val_seq_len - 1];
+        }
+    }
+    else
+    {
+        err = the_fake->return_val;
+    }
+
+    if(err == HERE_TRACKING_OK)
     {
         *ts = mock_here_tracking_get_unixtime_result;
     }
 
-    return here_tracking_get_unixtime_fake.return_val;
+    return err;
 }

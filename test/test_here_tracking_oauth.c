@@ -28,6 +28,7 @@
 #include <fff.h>
 
 #include "here_tracking_oauth.h"
+#include "here_tracking_test.h"
 
 #include "mock_here_tracking_data_buffer.h"
 #include "mock_here_tracking_log.h"
@@ -138,8 +139,7 @@ START_TEST(test_here_tracking_oauth_ok)
     static const char* device_secret = "Ohkai3eF-im5UGai4J-bIPizRburaiLohr4DQNE6cvM";
     static const char* base_url = "tracking.api.here.com";
     static const char* expected = \
-        "OAuth realm=\"IoT\","\
-        "oauth_consumer_key=\"1b25138b-c795-4b20-a724-59a40162d8fd\","\
+        "OAuth oauth_consumer_key=\"1b25138b-c795-4b20-a724-59a40162d8fd\","\
         "oauth_nonce=\"4723056724\","\
         "oauth_signature_method=\"HMAC-SHA256\","\
         "oauth_timestamp=\"1234567890\","\
@@ -147,7 +147,6 @@ START_TEST(test_here_tracking_oauth_ok)
         "oauth_signature=\"9UOXxjR28bVrPv%2Fvn7YEwflTNtC9UOQndD8npf4xLJc%3D\"";
     char oauth_hdr[HERE_TRACKING_OAUTH_MIN_OUT_SIZE];
     uint32_t oauth_hdr_size = HERE_TRACKING_OAUTH_MIN_OUT_SIZE;
-    test_here_tracking_oauth_setup();
     here_tracking_base64_enc_fake.custom_fake = return_base64;
     here_tracking_hmac_sha256_fake.custom_fake = return_hmac_sha256;
     mock_here_tracking_get_unixtime_set_result(1234567890);
@@ -157,9 +156,9 @@ START_TEST(test_here_tracking_oauth_ok)
                                                                 0,
                                                                 oauth_hdr,
                                                                 &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_OK);
-    ck_assert(oauth_hdr_size == strlen(expected));
-    ck_assert(memcmp(oauth_hdr, expected, oauth_hdr_size) == 0);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_uint_eq(oauth_hdr_size, strlen(expected));
+    ck_assert_int_eq(memcmp(oauth_hdr, expected, oauth_hdr_size), 0);
 }
 END_TEST
 
@@ -173,42 +172,41 @@ START_TEST(test_here_tracking_oauth_invalid_input)
     char oauth_hdr[HERE_TRACKING_OAUTH_MIN_OUT_SIZE];
     uint32_t oauth_hdr_size = HERE_TRACKING_OAUTH_MIN_OUT_SIZE;
     here_tracking_error res;
-    test_here_tracking_oauth_setup();
     res = here_tracking_oauth_create_header(NULL,
                                             device_secret,
                                             base_url,
                                             0,
                                             oauth_hdr,
                                             &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR_INVALID_INPUT);
     res = here_tracking_oauth_create_header(device_id,
                                             NULL,
                                             base_url,
                                             0,
                                             oauth_hdr,
                                             &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR_INVALID_INPUT);
     res = here_tracking_oauth_create_header(device_id,
                                             device_secret,
                                             NULL,
                                             0,
                                             oauth_hdr,
                                             &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR_INVALID_INPUT);
     res = here_tracking_oauth_create_header(device_id,
                                             device_secret,
                                             base_url,
                                             0,
                                             NULL,
                                             &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR_INVALID_INPUT);
     res = here_tracking_oauth_create_header(device_id,
                                             device_secret,
                                             base_url,
                                             0,
                                             oauth_hdr,
                                             NULL);
-    ck_assert(res == HERE_TRACKING_ERROR_INVALID_INPUT);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR_INVALID_INPUT);
     oauth_hdr_size = HERE_TRACKING_OAUTH_MIN_OUT_SIZE - 1;
     res = here_tracking_oauth_create_header(device_id,
                                             device_secret,
@@ -216,7 +214,7 @@ START_TEST(test_here_tracking_oauth_invalid_input)
                                             0,
                                             oauth_hdr,
                                             &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_ERROR_BUFFER_TOO_SMALL);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR_BUFFER_TOO_SMALL);
 }
 END_TEST
 
@@ -229,7 +227,6 @@ START_TEST(test_here_tracking_oauth_error_add_utoa_fail)
     static const char* base_url = "tracking.api.here.com";
     char oauth_hdr[HERE_TRACKING_OAUTH_MIN_OUT_SIZE];
     uint32_t oauth_hdr_size = HERE_TRACKING_OAUTH_MIN_OUT_SIZE;
-    test_here_tracking_oauth_setup();
     here_tracking_base64_enc_fake.custom_fake = return_base64;
     here_tracking_hmac_sha256_fake.custom_fake = return_hmac_sha256;
     here_tracking_data_buffer_add_utoa_fake.return_val = HERE_TRACKING_ERROR;
@@ -240,32 +237,19 @@ START_TEST(test_here_tracking_oauth_error_add_utoa_fail)
                                                                 0,
                                                                 oauth_hdr,
                                                                 &oauth_hdr_size);
-    ck_assert(res == HERE_TRACKING_ERROR);
+    ck_assert_int_eq(res, HERE_TRACKING_ERROR);
 }
 END_TEST
 
 /**************************************************************************************************/
 
-Suite* test_here_tracking_oauth_suite(void)
-{
-    Suite* s = suite_create(TEST_NAME);
-    TCase* tc = tcase_create(TEST_NAME);
-    tcase_add_test(tc, test_here_tracking_oauth_ok);
-    tcase_add_test(tc, test_here_tracking_oauth_invalid_input);
-    tcase_add_test(tc, test_here_tracking_oauth_error_add_utoa_fail);
-    suite_add_tcase(s, tc);
-    return s;
-}
+TEST_SUITE_BEGIN(TEST_NAME)
+    TEST_SUITE_ADD_SETUP_TEARDOWN_FN(test_here_tracking_oauth_setup, NULL)
+    TEST_SUITE_ADD_TEST(test_here_tracking_oauth_ok);
+    TEST_SUITE_ADD_TEST(test_here_tracking_oauth_invalid_input);
+    TEST_SUITE_ADD_TEST(test_here_tracking_oauth_error_add_utoa_fail);
+TEST_SUITE_END
 
 /**************************************************************************************************/
 
-int main()
-{
-    int failed;
-    SRunner* sr = srunner_create(test_here_tracking_oauth_suite());
-    srunner_set_xml(sr, TEST_NAME"_test_result.xml");
-    srunner_run_all(sr, CK_VERBOSE);
-    failed = srunner_ntests_failed(sr);
-    srunner_free(sr);
-    return (failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
-}
+TEST_MAIN(TEST_NAME)

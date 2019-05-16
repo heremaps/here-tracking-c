@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -30,10 +30,13 @@
 
 #include "here_tracking.h"
 #include "here_tracking_time.h"
+#include "here_tracking_version.h"
 
 /**************************************************************************************************/
 
 #define HERE_TRACKING_APP_DATA_BUFFER_SIZE 4096
+
+#define HERE_TRACKING_APP_USER_AGENT "here-tracking-c/"HERE_TRACKING_VERSION_STRING
 
 typedef struct
 {
@@ -46,7 +49,7 @@ static here_tracking_app app;
 
 /**************************************************************************************************/
 
-static here_tracking_error here_tracking_app_send_cb(uint8_t** data,
+static here_tracking_error here_tracking_app_send_cb(const uint8_t** data,
                                                      size_t* data_size,
                                                      void* user_data)
 {
@@ -127,6 +130,7 @@ int main(int argc, char** argv)
 
         err = here_tracking_init(&app.client, device_id, device_secret, base_url);
 
+        app.client.user_agent = HERE_TRACKING_APP_USER_AGENT;
         app.send_complete = false;
 
         while(samples_to_send > 0)
@@ -134,7 +138,8 @@ int main(int argc, char** argv)
             err = here_tracking_send_stream(&app.client,
                                             here_tracking_app_send_cb,
                                             here_tracking_app_recv_cb,
-                                            HERE_TRACKING_RESP_WITH_DATA,
+                                            HERE_TRACKING_REQ_DATA_JSON,
+                                            HERE_TRACKING_RESP_WITH_DATA_JSON,
                                             NULL);
 
             if(err != HERE_TRACKING_OK)

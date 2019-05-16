@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,17 +22,18 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "here_tracking_data_buffer.h"
 #include "here_tracking_http.h"
 #include "here_tracking_http_defs.h"
 #include "here_tracking_http_parser.h"
+#include "here_tracking_log.h"
 #include "here_tracking_oauth.h"
 #include "here_tracking_time.h"
 #include "here_tracking_tls_writer.h"
 #include "here_tracking_utils.h"
+#include "here_tracking_uuid_gen.h"
 
 /**************************************************************************************************/
 
@@ -45,16 +46,16 @@ static const char* here_tracking_http_query_async = "?async=true";
 /**************************************************************************************************/
 
 static const char* here_tracking_http_header_bearer =           "Bearer";
-static const char* here_tracking_http_header_content_type =     "Content-Type";
 static const char* here_tracking_http_header_host =             "Host";
+static const char* here_tracking_http_header_retry_after =      "Retry-After";
 static const char* here_tracking_http_header_x_here_timestamp = "x-here-timestamp";
+static const char* here_tracking_http_header_x_request_id =     "x-request-id";
 
 /**************************************************************************************************/
 
-static const char* here_tracking_http_version =          "HTTP/1.1";
-static const char* here_tracking_http_access_token =     "\"accessToken\"";
-static const char* here_tracking_http_expires_in =       "\"expiresIn\"";
-static const char* here_tracking_http_application_json = "application/json";
+static const char* here_tracking_http_version =      "HTTP/1.1";
+static const char* here_tracking_http_access_token = "\"accessToken\"";
+static const char* here_tracking_http_expires_in =   "\"expiresIn\"";
 
 /**************************************************************************************************/
 
@@ -145,7 +146,7 @@ static here_tracking_error here_tracking_http_send_chunk(here_tracking_tls_write
                                                          const uint8_t* chunk_data,
                                                          size_t chunk_size);
 
-static here_tracking_error here_tracking_http_send_cb(uint8_t** data,
+static here_tracking_error here_tracking_http_send_cb(const uint8_t** data,
                                                       size_t* data_size,
                                                       void* user_data);
 
@@ -155,6 +156,11 @@ static here_tracking_error here_tracking_http_recv_cb(const here_tracking_recv_d
 static here_tracking_error \
     here_tracking_http_get_write_auth_header(here_tracking_tls_writer* tls_writer,
                                              const here_tracking_http_header* auth_header);
+
+
+static here_tracking_error here_tracking_http_get_correlation_id(here_tracking_client* client,
+                                                                 char* buffer, size_t buff_size);
+
 
 /**************************************************************************************************/
 
@@ -170,6 +176,7 @@ here_tracking_error here_tracking_http_auth(here_tracking_client* client)
         uint8_t tls_buffer[HERE_TRACKING_HTTP_TLS_BUFFER_SIZE];
         uint8_t oauth_buffer[HERE_TRACKING_OAUTH_MIN_OUT_SIZE];
         uint32_t oauth_size = HERE_TRACKING_OAUTH_MIN_OUT_SIZE;
+        char correlation_id[HERE_TRACKING_UUID_SIZE];
         here_tracking_http_auth_data auth_data;
 
         TRY((here_tracking_tls_writer_init(&tls_writer,
@@ -200,6 +207,23 @@ here_tracking_error here_tracking_http_auth(here_tracking_client* client)
 
         /* Content length header */
         HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer, here_tracking_http_header_content_length, "0");
+
+        /* Correlation id header */
+        if(here_tracking_http_get_correlation_id(client, correlation_id, HERE_TRACKING_UUID_SIZE)
+           == HERE_TRACKING_OK)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_x_request_id,
+                                            correlation_id);
+            HERE_TRACKING_LOGI("Auth req with id: %s", correlation_id);
+        }
+
+        if(client->user_agent != NULL && strlen(client->user_agent) > 0)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_user_agent,
+                                            client->user_agent);
+        }
 
         /* Authorization header */
         TRY((here_tracking_tls_writer_write_string(&tls_writer,
@@ -256,18 +280,19 @@ here_tracking_error here_tracking_http_send(here_tracking_client* client,
     send_recv_ctx.status_code = HERE_TRACKING_OK;
     TRY((here_tracking_data_buffer_init(&send_recv_ctx.resp_buffer, data, recv_size)));
     err = here_tracking_http_send_stream(client,
-                                   here_tracking_http_send_cb,
-                                   here_tracking_http_recv_cb,
-                                   HERE_TRACKING_RESP_WITH_DATA,
-                                   &send_recv_ctx);
+                                         here_tracking_http_send_cb,
+                                         here_tracking_http_recv_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         &send_recv_ctx);
 
-    if(client->data_cb != NULL)
+    if(err == HERE_TRACKING_OK && client->data_cb != NULL)
     {
         if(send_recv_ctx.status_code == HERE_TRACKING_ERROR_BUFFER_TOO_SMALL)
         {
             client->data_cb(HERE_TRACKING_ERROR_BUFFER_TOO_SMALL,
                             send_recv_ctx.resp_buffer.buffer,
-                            send_recv_ctx.body_size,
+                            (uint32_t)send_recv_ctx.body_size,
                             client->data_cb_user_data);
         }
         else
@@ -288,6 +313,7 @@ here_tracking_http_error:
 here_tracking_error here_tracking_http_send_stream(here_tracking_client* client,
                                              here_tracking_send_cb send_cb,
                                              here_tracking_recv_cb recv_cb,
+                                             here_tracking_req_type req_type,
                                              here_tracking_resp_type resp_type,
                                              void* user_data)
 {
@@ -299,8 +325,9 @@ here_tracking_error here_tracking_http_send_stream(here_tracking_client* client,
     {
         here_tracking_tls_writer tls_writer;
         uint8_t tls_buffer[HERE_TRACKING_HTTP_TLS_BUFFER_SIZE];
+        char correlation_id[HERE_TRACKING_UUID_SIZE];
         here_tracking_http_recv_ctx recv_ctx;
-        uint8_t* data;
+        const uint8_t* data;
         size_t data_size;
 
         TRY((here_tracking_tls_writer_init(&tls_writer,
@@ -333,11 +360,44 @@ here_tracking_error here_tracking_http_send_stream(here_tracking_client* client,
                                         here_tracking_http_header_connection,
                                         here_tracking_http_connection_close);
         HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
-                                        here_tracking_http_header_content_type,
-                                        here_tracking_http_application_json);
-        HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
                                         here_tracking_http_header_transfer_encoding,
                                         here_tracking_http_transfer_encoding_chunked);
+
+        if(req_type == HERE_TRACKING_REQ_DATA_PROTOBUF)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_content_type,
+                                            here_tracking_http_content_type_octet_stream);
+        }
+        else
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_content_type,
+                                            here_tracking_http_content_type_json);
+        }
+
+        if(resp_type == HERE_TRACKING_RESP_WITH_DATA_PROTOBUF)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_accept,
+                                            here_tracking_http_content_type_octet_stream);
+        }
+
+        if(here_tracking_http_get_correlation_id(client, correlation_id, HERE_TRACKING_UUID_SIZE)
+           == HERE_TRACKING_OK)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_x_request_id,
+                                            correlation_id);
+            HERE_TRACKING_LOGI("Send req with id: %s", correlation_id);
+        }
+
+        if(client->user_agent != NULL && strlen(client->user_agent) > 0)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_user_agent,
+                                            client->user_agent);
+        }
 
         /* Construct authorization header */
         TRY((here_tracking_tls_writer_write_string(&tls_writer,
@@ -414,8 +474,11 @@ here_tracking_error here_tracking_http_get(here_tracking_client* client,
     {
         here_tracking_tls_writer tls_writer;
         uint8_t tls_buffer[HERE_TRACKING_HTTP_TLS_BUFFER_SIZE];
+        char correlation_id[HERE_TRACKING_UUID_SIZE];
         here_tracking_http_recv_ctx recv_ctx;
         uint8_t i;
+        bool user_agent_present = false;
+        bool correlation_id_present = false;
 
         TRY((here_tracking_tls_writer_init(&tls_writer,
                                            client->tls,
@@ -446,16 +509,47 @@ here_tracking_error here_tracking_http_get(here_tracking_client* client,
             here_tracking_http_header* header = (request->headers + i);
 
             /* Special handling for authorization header */
-            if(strcmp(header->name, here_tracking_http_header_authorization) == 0)
+            if(here_tracking_utils_strcasecmp(header->name,
+                                              here_tracking_http_header_authorization) == 0)
             {
                 here_tracking_http_get_write_auth_header(&tls_writer, header);
             }
             else
             {
+                if(here_tracking_utils_strcasecmp(header->name,
+                                                  here_tracking_http_header_user_agent) == 0)
+                {
+                    user_agent_present = true;
+                }
+                else if(here_tracking_utils_strcasecmp(header->name,
+                                                       here_tracking_http_header_x_request_id) == 0)
+                {
+                    HERE_TRACKING_LOGI("Send req with id: %s", header->value);
+                    correlation_id_present = true;
+                }
+
                 HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
                                                 request->headers[i].name,
                                                 request->headers[i].value);
             }
+        }
+
+        if(!correlation_id_present &&
+           here_tracking_http_get_correlation_id(client,
+                                                 correlation_id,
+                                                 HERE_TRACKING_UUID_SIZE) == HERE_TRACKING_OK)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_x_request_id,
+                                            correlation_id);
+            HERE_TRACKING_LOGI("Send req with id: %s", correlation_id);
+        }
+
+        if(!user_agent_present && client->user_agent != NULL && strlen(client->user_agent) > 0)
+        {
+            HERE_TRACKING_HTTP_WRITE_HEADER(&tls_writer,
+                                            here_tracking_http_header_user_agent,
+                                            client->user_agent);
         }
 
         /* Complete header section */
@@ -509,18 +603,18 @@ static bool here_tracking_http_auth_resp_cb(const here_tracking_http_parser_evt*
         {
             if(auth_data->status_code == HERE_TRACKING_ERROR_UNAUTHORIZED)
             {
-                const here_tracking_http_parser_evt_hdr* hdr_data = &(evt->data.hdr);
+                const here_tracking_http_parser_evt_hdr* hdr = &(evt->data.hdr);
 
-                if(hdr_data->hdr_key_size == strlen(here_tracking_http_header_x_here_timestamp) &&
-                   here_tracking_utils_memcasecmp((const uint8_t*)hdr_data->hdr_key,
+                if(hdr->hdr_key_size == strlen(here_tracking_http_header_x_here_timestamp) &&
+                   here_tracking_utils_memcasecmp((const uint8_t*)hdr->hdr_key,
                                         (const uint8_t*)here_tracking_http_header_x_here_timestamp,
-                                        hdr_data->hdr_key_size) == 0)
+                                        hdr->hdr_key_size) == 0)
                 {
                     uint32_t srv_time, pl_time;
 
                     if(here_tracking_get_unixtime(&pl_time) == HERE_TRACKING_OK)
                     {
-                        srv_time = atoi(hdr_data->hdr_val);
+                        srv_time = here_tracking_utils_atou(hdr->hdr_val, hdr->hdr_val_size);
                         auth_data->client->srv_time_diff = srv_time - pl_time;
                         auth_data->status_code = HERE_TRACKING_ERROR_TIME_MISMATCH;
                         res = true;
@@ -681,6 +775,26 @@ static bool here_tracking_http_send_resp_cb(const here_tracking_http_parser_evt*
         }
         break;
 
+        case HERE_TRACKING_HTTP_PARSER_EVT_HDR:
+        {
+            const here_tracking_http_parser_evt_hdr* hdr = &(evt->data.hdr);
+
+            if(hdr->hdr_key_size == strlen(here_tracking_http_header_retry_after) &&
+               here_tracking_utils_memcasecmp((const uint8_t*)hdr->hdr_key,
+                                              (const uint8_t*)here_tracking_http_header_retry_after,
+                                              hdr->hdr_key_size) == 0)
+            {
+                uint32_t current_time;
+
+                if(here_tracking_get_unixtime(&current_time) == HERE_TRACKING_OK)
+                {
+                    recv_ctx->client->retry_after =
+                        current_time + here_tracking_utils_atou(hdr->hdr_val, hdr->hdr_val_size);
+                }
+            }
+        }
+        break;
+
         case HERE_TRACKING_HTTP_PARSER_EVT_BODY:
         {
             here_tracking_recv_data data;
@@ -781,7 +895,7 @@ static here_tracking_error here_tracking_http_recv_resp(here_tracking_client* cl
                 size - parse_size);
 
         pos = size - parse_size; /* Free space starts in this position */
-        size = recv_buffer_size - pos; /* Free space available */
+        size = (uint32_t)recv_buffer_size - pos; /* Free space available */
 
         /* Read more data to the free space in work buffer */
         TRY((here_tracking_tls_read(client->tls, ((char*)recv_buffer) + pos, &size)));
@@ -886,6 +1000,12 @@ static here_tracking_error here_tracking_http_status_code_to_err(uint16_t http_s
         }
         break;
 
+        case HERE_TRACKING_HTTP_STATUS_TOO_MANY_REQUESTS:
+        {
+            err = HERE_TRACKING_ERROR_TOO_MANY_REQUESTS;
+        }
+        break;
+
         default:
         {
             err = HERE_TRACKING_ERROR;
@@ -920,7 +1040,7 @@ here_tracking_http_error:
 
 /**************************************************************************************************/
 
-static here_tracking_error here_tracking_http_send_cb(uint8_t** data,
+static here_tracking_error here_tracking_http_send_cb(const uint8_t** data,
                                                       size_t* data_size,
                                                       void* user_data)
 {
@@ -1012,4 +1132,24 @@ static here_tracking_error \
 
 here_tracking_http_error:
     return err;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_http_get_correlation_id(here_tracking_client* client,
+                                                                 char* buffer, size_t buff_size)
+{
+    here_tracking_error ret = HERE_TRACKING_OK;
+
+    if(NULL != client->correlation_id
+       && strlen(client->correlation_id) < buff_size)
+    {
+        strncpy(buffer, client->correlation_id, buff_size);
+    }
+    else
+    {
+        ret = here_tracking_uuid_gen_new(buffer, buff_size);
+    }
+
+    return ret;
 }

@@ -1,5 +1,5 @@
 /**************************************************************************************************
-* Copyright (C) 2017 HERE Europe B.V.                                                             *
+* Copyright (C) 2017-2019 HERE Europe B.V.                                                        *
 * All rights reserved.                                                                            *
 *                                                                                                 *
 * MIT License                                                                                     *
@@ -26,8 +26,6 @@
 #ifndef HERE_TRACKING_TLS_CERT_H
 #define HERE_TRACKING_TLS_CERT_H
 
-extern const char* here_tracking_tls_cert_verisign_universal_root;
-
-extern const char* here_tracking_tls_cert_digicert_global_root_g2;
+extern const char* here_tracking_tls_cert_globalsign_root_r3;
 
 #endif /* HERE_TRACKING_TLS_CERT_H */

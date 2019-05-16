@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -32,13 +32,19 @@
 #define HERE_TRACKING_HTTP_STATUS_FORBIDDEN           403
 #define HERE_TRACKING_HTTP_STATUS_NOT_FOUND           404
 #define HERE_TRACKING_HTTP_STATUS_PRECONDITION_FAILED 412
+#define HERE_TRACKING_HTTP_STATUS_TOO_MANY_REQUESTS   429
 
 extern const char* here_tracking_http_connection_close;
+extern const char* here_tracking_http_content_type_json;
+extern const char* here_tracking_http_content_type_octet_stream;
 extern const char* here_tracking_http_crlf;
+extern const char* here_tracking_http_header_accept;
 extern const char* here_tracking_http_header_authorization;
 extern const char* here_tracking_http_header_connection;
 extern const char* here_tracking_http_header_content_length;
+extern const char* here_tracking_http_header_content_type;
 extern const char* here_tracking_http_header_transfer_encoding;
+extern const char* here_tracking_http_header_user_agent;
 extern const char* here_tracking_http_method_get;
 extern const char* here_tracking_http_method_post;
 extern const char* here_tracking_http_path_token;

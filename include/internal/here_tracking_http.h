@@ -74,6 +74,7 @@ here_tracking_error here_tracking_http_send(here_tracking_client* client,
 here_tracking_error here_tracking_http_send_stream(here_tracking_client* client,
                                                    here_tracking_send_cb send_cb,
                                                    here_tracking_recv_cb recv_cb,
+                                                   here_tracking_req_type req_type,
                                                    here_tracking_resp_type resp_type,
                                                    void* user_data);
 

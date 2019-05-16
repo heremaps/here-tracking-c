@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -33,9 +33,11 @@
 #include "here_tracking_test.h"
 
 #include "mock_here_tracking_data_buffer.h"
+#include "mock_here_tracking_log.h"
 #include "mock_here_tracking_time.h"
 #include "mock_here_tracking_tls.h"
 #include "mock_here_tracking_tls_writer.h"
+#include "mock_here_tracking_uuid_gen.h"
 
 #define TEST_NAME "here_tracking_http"
 
@@ -54,9 +56,11 @@ FAKE_VALUE_FUNC6(here_tracking_error,
 
 #define TEST_HERE_TRACKING_HTTP_FAKE_LIST(FAKE) \
     MOCK_HERE_TRACKING_DATA_BUFFER_FAKE_LIST(FAKE) \
+    MOCK_HERE_TRACKING_LOG_FAKE_LIST(FAKE) \
     MOCK_HERE_TRACKING_TIME_FAKE_LIST(FAKE) \
     MOCK_HERE_TRACKING_TLS_FAKE_LIST(FAKE) \
     MOCK_HERE_TRACKING_TLS_WRITER_FAKE_LIST(FAKE) \
+    MOCK_HERE_TRACKING_UUID_GEN_FAKE_LIST(FAKE) \
     FAKE(here_tracking_oauth_create_header)
 
 #define TEST_HERE_TRACKING_HTTP_TLS_READ_CHUNK_SIZE 256
@@ -119,6 +123,15 @@ static const char* fake_precondition_failed_resp = \
     "HTTP/1.1 412 Precondition Failed\r\n"\
     "Content-Length: 0\r\n"\
     "\r\n";
+static const char* fake_too_many_requests_resp = \
+    "HTTP/1.1 429 Too Many Requests\r\n"\
+    "Content-Length: 0\r\n"\
+    "Retry-After: 3600\r\n"\
+    "\r\n";
+static const char* fake_too_many_requests_resp_no_retry_after = \
+    "HTTP/1.1 429 Too Many Requests\r\n"\
+    "Content-Length: 0\r\n"\
+    "\r\n";
 static const char* fake_unknown_resp = \
     "HTTP/1.1 999 I Don't Know This Code\r\n"\
     "Content-Length: 0\r\n"\
@@ -173,6 +186,7 @@ static uint32_t* mock_tls_read_data_size = NULL;
 static uint8_t** test_here_tracking_http_send_chunks = NULL;
 static size_t* test_here_tracking_http_send_chunk_sizes = NULL;
 static uint8_t test_here_tracking_http_send_chunk_index = 0;
+static const char* test_here_tracking_http_user_agent = "test-here-tracking-http";
 
 /**************************************************************************************************/
 
@@ -205,6 +219,8 @@ void test_here_tracking_http_tc_setup(void)
     here_tracking_tls_read_fake.return_val = HERE_TRACKING_OK;
     here_tracking_tls_read_fake.custom_fake = mock_here_tracking_tls_read_custom;
     mock_here_tracking_tls_read_set_result_data(NULL, NULL, 0);
+    here_tracking_uuid_gen_new_fake.return_val = HERE_TRACKING_OK;
+    here_tracking_uuid_gen_new_fake.custom_fake = mock_here_tracking_uuid_gen_new_custom;
     here_tracking_oauth_create_header_fake.return_val = HERE_TRACKING_OK;
     here_tracking_oauth_create_header_fake.custom_fake = fake_here_tracking_oauth_create_header;
     test_here_tracking_http_recv_data_cb_called = 0;
@@ -243,6 +259,9 @@ static void test_here_tracking_http_setup(here_tracking_client* client)
     client->data_cb = NULL;
     client->data_cb_user_data = NULL;
     client->tls = NULL;
+    client->correlation_id = NULL;
+    client->user_agent = NULL;
+    client->retry_after = 0;
 }
 
 /**************************************************************************************************/
@@ -322,7 +341,7 @@ static void test_here_tracking_http_recv_data_cb_err(here_tracking_error err,
 
 /**************************************************************************************************/
 
-static here_tracking_error test_here_tracking_http_send_ok_cb(uint8_t** data,
+static here_tracking_error test_here_tracking_http_send_ok_cb(const uint8_t** data,
                                                               size_t* data_size,
                                                               void* user_data)
 {
@@ -452,11 +471,12 @@ START_TEST(test_here_tracking_http_auth_ok)
     test_here_tracking_http_setup(&client);
     test_here_tracking_http_tls_read_set_result(fake_auth_resp);
     err = here_tracking_http_auth(&client);
-    ck_assert(err == HERE_TRACKING_OK);
-    ck_assert(strcmp(client.access_token, fake_access_token) ==  0);
-    ck_assert(here_tracking_tls_init_fake.call_count == 1);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 1);
-    ck_assert(here_tracking_oauth_create_header_fake.call_count == 1);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_str_eq(client.access_token, fake_access_token);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
 }
 END_TEST
 
@@ -471,11 +491,119 @@ START_TEST(test_here_tracking_http_auth_ok_tls_initialized)
     test_here_tracking_http_tls_read_set_result(fake_auth_resp);
     client.tls = (here_tracking_tls)1;
     err = here_tracking_http_auth(&client);
-    ck_assert(err == HERE_TRACKING_OK);
-    ck_assert(strlen(client.access_token) > 0);
-    ck_assert(here_tracking_tls_init_fake.call_count == 0);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 1);
-    ck_assert(here_tracking_oauth_create_header_fake.call_count == 1);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_ge(strlen(client.access_token), 0);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_auth_ok_user_agent_set)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint32_t i;
+    bool user_agent_set = false;
+
+    test_here_tracking_http_setup(&client);
+    test_here_tracking_http_tls_read_set_result(fake_auth_resp);
+    client.user_agent = test_here_tracking_http_user_agent;
+    err = here_tracking_http_auth(&client);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_str_eq(client.access_token, fake_access_token);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_writer_write_string_fake.arg_histories_dropped, 0);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                  here_tracking_http_header_user_agent) == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   test_here_tracking_http_user_agent) == 0))
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(user_agent_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_auth_ok_correlation_id_set)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint32_t i;
+    bool correlation_id_set = false;
+    const char* correlation_id = "my-correlation-id";
+
+    test_here_tracking_http_setup(&client);
+    test_here_tracking_http_tls_read_set_result(fake_auth_resp);
+    client.correlation_id = correlation_id;
+    err = here_tracking_http_auth(&client);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_str_eq(client.access_token, fake_access_token);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_writer_write_string_fake.arg_histories_dropped, 0);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   "x-request-id") == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   correlation_id) == 0))
+        {
+            correlation_id_set = true;
+        }
+    }
+
+    ck_assert(correlation_id_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_auth_ok_user_agent_empty_string)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint32_t i;
+    bool user_agent_set = false;
+
+    test_here_tracking_http_setup(&client);
+    test_here_tracking_http_tls_read_set_result(fake_auth_resp);
+    client.user_agent = "";
+    err = here_tracking_http_auth(&client);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_str_eq(client.access_token, fake_access_token);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_writer_write_string_fake.arg_histories_dropped, 0);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count; ++i)
+    {
+        if(strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                  here_tracking_http_header_user_agent) == 0)
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(!user_agent_set);
 }
 END_TEST
 
@@ -488,11 +616,12 @@ START_TEST(test_here_tracking_http_auth_tls_init_fail)
     test_here_tracking_http_setup(&client);
     here_tracking_tls_init_fake.return_val = HERE_TRACKING_ERROR;
     err = here_tracking_http_auth(&client);
-    ck_assert(err == HERE_TRACKING_ERROR);
-    ck_assert(strlen(client.access_token) == 0);
-    ck_assert(here_tracking_tls_init_fake.call_count == 1);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 0);
-    ck_assert(here_tracking_oauth_create_header_fake.call_count == 0);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(strlen(client.access_token), 0);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
 }
 END_TEST
 
@@ -505,11 +634,12 @@ START_TEST(test_here_tracking_http_auth_tls_connect_fail)
     test_here_tracking_http_setup(&client);
     here_tracking_tls_connect_fake.return_val = HERE_TRACKING_ERROR;
     err = here_tracking_http_auth(&client);
-    ck_assert(err == HERE_TRACKING_ERROR);
-    ck_assert(strlen(client.access_token) == 0);
-    ck_assert(here_tracking_tls_init_fake.call_count == 1);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 1);
-    ck_assert(here_tracking_oauth_create_header_fake.call_count == 0);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(strlen(client.access_token), 0);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_oauth_create_header_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
 }
 END_TEST
 
@@ -522,11 +652,11 @@ START_TEST(test_here_tracking_http_auth_oauth_create_header_fail)
     test_here_tracking_http_setup(&client);
     here_tracking_oauth_create_header_fake.return_val = HERE_TRACKING_ERROR;
     err = here_tracking_http_auth(&client);
-    ck_assert(err == HERE_TRACKING_ERROR);
-    ck_assert(strlen(client.access_token) == 0);
-    ck_assert(here_tracking_tls_init_fake.call_count == 1);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 1);
-    ck_assert(here_tracking_oauth_create_header_fake.call_count == 1);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(strlen(client.access_token), 0);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
 }
 END_TEST
 
@@ -731,8 +861,9 @@ START_TEST(test_here_tracking_http_send_ok)
     client.data_cb = test_here_tracking_http_recv_data_cb_send_ok;
     strcpy(client.access_token, fake_access_token);
     err = here_tracking_http_send(&client, data, 100, 100);
-    ck_assert(err == HERE_TRACKING_OK);
-    ck_assert(test_here_tracking_http_recv_data_cb_called == 1);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
 }
 END_TEST
 
@@ -746,13 +877,80 @@ START_TEST(test_here_tracking_http_send_tls_init_fail)
 
     test_here_tracking_http_setup(&client);
     here_tracking_tls_init_fake.return_val = HERE_TRACKING_ERROR;
+    client.data_cb = test_here_tracking_http_recv_data_cb_err;
     err = here_tracking_http_send(&client, data, 100, 100);
-    ck_assert(err == HERE_TRACKING_ERROR);
-    ck_assert(here_tracking_tls_init_fake.call_count == 1);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 0);
-    ck_assert(here_tracking_tls_read_fake.call_count == 0);
-    ck_assert(here_tracking_tls_write_fake.call_count == 0);
-    ck_assert(here_tracking_tls_close_fake.call_count == 0);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_read_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_write_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_close_fake.call_count, 0);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 0);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_tls_connect_fail)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    char data[100];
+
+    test_here_tracking_http_setup(&client);
+    here_tracking_tls_connect_fake.return_val = HERE_TRACKING_ERROR;
+    client.data_cb = test_here_tracking_http_recv_data_cb_err;
+    err = here_tracking_http_send(&client, data, 100, 100);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_read_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_write_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_close_fake.call_count, 0);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 0);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_tls_writer_write_string_fail)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    char data[100];
+
+    test_here_tracking_http_setup(&client);
+    here_tracking_tls_writer_write_string_fake.return_val = HERE_TRACKING_ERROR;
+    client.data_cb = test_here_tracking_http_recv_data_cb_err;
+    err = here_tracking_http_send(&client, data, 100, 100);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_int_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_int_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_int_eq(here_tracking_tls_writer_init_fake.call_count, 1);
+    ck_assert_int_eq(here_tracking_tls_writer_write_string_fake.call_count, 1);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 0);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_tls_read_fail)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    char data[100];
+
+    test_here_tracking_http_setup(&client);
+    client.data_cb = test_here_tracking_http_recv_data_cb_err;
+    here_tracking_tls_read_fake.return_val = HERE_TRACKING_ERROR;
+    err = here_tracking_http_send(&client, data, 100, 100);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_int_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_int_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_int_eq(here_tracking_tls_writer_init_fake.call_count, 1);
+    ck_assert_int_eq(here_tracking_tls_read_fake.call_count, 1);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 0);
 }
 END_TEST
 
@@ -914,10 +1112,196 @@ START_TEST(test_here_tracking_http_send_stream_ok)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_ok_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
-    ck_assert(err == HERE_TRACKING_OK);
-    ck_assert(test_here_tracking_http_recv_data_cb_called == 3);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_ok_user_agent_set)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+    uint32_t i;
+    bool user_agent_set = false;
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    client.user_agent = test_here_tracking_http_user_agent;
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_ok_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   here_tracking_http_header_user_agent) == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   test_here_tracking_http_user_agent) == 0))
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(user_agent_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_ok_user_agent_empty_string)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+    uint32_t i;
+    bool user_agent_set = false;
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    client.user_agent = "";
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_ok_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   here_tracking_http_header_user_agent) == 0))
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(!user_agent_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_ok_proto_req)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+    uint32_t i;
+    bool proto_content_type_set = false;
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_ok_cb,
+                                         HERE_TRACKING_REQ_DATA_PROTOBUF,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   here_tracking_http_header_content_type) == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   here_tracking_http_content_type_octet_stream) == 0))
+        {
+            proto_content_type_set = true;
+        }
+    }
+
+    ck_assert(proto_content_type_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_ok_proto_resp)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+    uint32_t i;
+    bool proto_accept_set = false;
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_ok_cb,
+                                         HERE_TRACKING_REQ_DATA_PROTOBUF,
+                                         HERE_TRACKING_RESP_WITH_DATA_PROTOBUF,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 1);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   here_tracking_http_header_accept) == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   here_tracking_http_content_type_octet_stream) == 0))
+        {
+            proto_accept_set = true;
+        }
+    }
+
+    ck_assert(proto_accept_set);
 }
 END_TEST
 
@@ -942,14 +1326,87 @@ START_TEST(test_here_tracking_http_send_stream_tls_init_fail)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_ok_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
-    ck_assert(err == HERE_TRACKING_ERROR);
-    ck_assert(here_tracking_tls_init_fake.call_count == 1);
-    ck_assert(here_tracking_tls_connect_fake.call_count == 0);
-    ck_assert(here_tracking_tls_read_fake.call_count == 0);
-    ck_assert(here_tracking_tls_write_fake.call_count == 0);
-    ck_assert(here_tracking_tls_close_fake.call_count == 0);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_read_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_write_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_close_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_tls_writer_init_fail)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    here_tracking_tls_writer_init_fake.return_val = HERE_TRACKING_ERROR;
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_ok_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_writer_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_read_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_write_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_close_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_tls_writer_write_char_fail)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    here_tracking_tls_writer_write_char_fake.return_val = HERE_TRACKING_ERROR;
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_ok_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_ERROR);
+    ck_assert_uint_eq(here_tracking_tls_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_connect_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_writer_init_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_read_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_writer_write_char_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_tls_write_fake.call_count, 0);
+    ck_assert_uint_eq(here_tracking_tls_close_fake.call_count, 1);
+    ck_assert_uint_eq(here_tracking_uuid_gen_new_fake.call_count, 0);
 }
 END_TEST
 
@@ -981,7 +1438,8 @@ START_TEST(test_here_tracking_http_send_stream_too_large_to_parse_fail)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_ok_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_ERROR);
 }
@@ -1012,7 +1470,8 @@ START_TEST(test_here_tracking_http_send_stream_bad_request)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_err_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 2);
@@ -1045,7 +1504,8 @@ START_TEST(test_here_tracking_http_send_stream_unauthorized)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_err_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 2);
@@ -1078,7 +1538,8 @@ START_TEST(test_here_tracking_http_send_stream_forbidden)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_err_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 2);
@@ -1111,7 +1572,8 @@ START_TEST(test_here_tracking_http_send_stream_not_found)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_err_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 2);
@@ -1144,7 +1606,8 @@ START_TEST(test_here_tracking_http_send_stream_unknown_error_code)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_err_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 2);
@@ -1174,10 +1637,85 @@ START_TEST(test_here_tracking_http_send_stream_no_content)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_ok_no_content_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
                                          HERE_TRACKING_RESP_STATUS_ONLY,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 2);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_too_many_requests)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    const char* mock_tls_read_data[1] = { fake_too_many_requests_resp };
+    uint32_t mock_tls_read_data_size[1] = { strlen(fake_too_many_requests_resp) };
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+    uint32_t time_in_test = 1000;
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    mock_here_tracking_tls_read_set_result_data(mock_tls_read_data, mock_tls_read_data_size, 1);
+    mock_here_tracking_get_unixtime_set_result(time_in_test);
+    client.data_cb = test_here_tracking_http_recv_data_cb_err;
+    strcpy(client.access_token, fake_access_token);
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_err_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 2);
+    ck_assert_int_eq(test_here_tracking_http_recv_data_cb_status,
+                     HERE_TRACKING_ERROR_TOO_MANY_REQUESTS);
+    ck_assert_uint_eq(client.retry_after, time_in_test + 3600);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_send_stream_too_many_requests_no_retry_after)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    const char* mock_tls_read_data[1] = { fake_too_many_requests_resp_no_retry_after };
+    uint32_t mock_tls_read_data_size[1] = { strlen(fake_too_many_requests_resp_no_retry_after) };
+    uint8_t* chunks[2];
+    size_t chunk_sizes[2];
+    char* data = "test_data";
+
+    chunks[0] = (uint8_t*)data;
+    chunks[1] = NULL;
+    chunk_sizes[0] = strlen(data);
+    chunk_sizes[1] = 0;
+    test_here_tracking_http_send_chunks = chunks;
+    test_here_tracking_http_send_chunk_sizes = chunk_sizes;
+    test_here_tracking_http_setup(&client);
+    mock_here_tracking_tls_read_set_result_data(mock_tls_read_data, mock_tls_read_data_size, 1);
+    client.data_cb = test_here_tracking_http_recv_data_cb_err;
+    strcpy(client.access_token, fake_access_token);
+    err = here_tracking_http_send_stream(&client,
+                                         test_here_tracking_http_send_ok_cb,
+                                         test_here_tracking_http_recv_err_cb,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
+                                         NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 2);
+    ck_assert_int_eq(test_here_tracking_http_recv_data_cb_status,
+                     HERE_TRACKING_ERROR_TOO_MANY_REQUESTS);
+    ck_assert_uint_eq(client.retry_after, 0);
 }
 END_TEST
 
@@ -1206,7 +1744,8 @@ START_TEST(test_here_tracking_http_send_stream_ok_send_multi_chunk)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_ok_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called == 3);
@@ -1235,7 +1774,8 @@ START_TEST(test_here_tracking_http_send_stream_ok_recv_multi_chunk)
     err = here_tracking_http_send_stream(&client,
                                          test_here_tracking_http_send_ok_cb,
                                          test_here_tracking_http_recv_ok_multi_chunk_cb,
-                                         HERE_TRACKING_RESP_WITH_DATA,
+                                         HERE_TRACKING_REQ_DATA_JSON,
+                                         HERE_TRACKING_RESP_WITH_DATA_JSON,
                                          NULL);
     ck_assert(err == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_http_recv_data_cb_called > 3);
@@ -1263,6 +1803,172 @@ START_TEST(test_here_tracking_http_get_ok)
     err = here_tracking_http_get(&client, &request, test_here_tracking_http_recv_ok_cb, NULL);
     ck_assert_int_eq(err, HERE_TRACKING_OK);
     ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_get_ok_user_agent_set)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    here_tracking_http_request request;
+    char* host = "tracking.here.com";
+    char* path = "/index.html";
+    uint32_t i;
+    bool user_agent_set = false;
+
+    test_here_tracking_http_setup(&client);
+    client.user_agent = test_here_tracking_http_user_agent;
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    request.host = host;
+    request.path = path;
+    request.port = 443;
+    request.headers = NULL;
+    request.header_count = 0;
+    err = here_tracking_http_get(&client, &request, test_here_tracking_http_recv_ok_cb, NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                  here_tracking_http_header_user_agent) == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   test_here_tracking_http_user_agent) == 0))
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(user_agent_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_get_ok_custom_user_agent_set)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    here_tracking_http_request request;
+    here_tracking_http_header header;
+    char* host = "tracking.here.com";
+    char* path = "/index.html";
+    char* my_user_agent = "my-very-own-user-agent";
+    uint32_t i;
+    bool user_agent_set = false;
+
+    test_here_tracking_http_setup(&client);
+    client.user_agent = test_here_tracking_http_user_agent;
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    header.name = (char*)here_tracking_http_header_user_agent;
+    header.value = my_user_agent;
+    request.host = host;
+    request.path = path;
+    request.port = 443;
+    request.headers = &header;
+    request.header_count = 1;
+    err = here_tracking_http_get(&client, &request, test_here_tracking_http_recv_ok_cb, NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                  here_tracking_http_header_user_agent) == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   my_user_agent) == 0))
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(user_agent_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_get_ok_user_agent_empty_string)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    here_tracking_http_request request;
+    char* host = "tracking.here.com";
+    char* path = "/index.html";
+    uint32_t i;
+    bool user_agent_set = false;
+
+    test_here_tracking_http_setup(&client);
+    client.user_agent = "";
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    request.host = host;
+    request.path = path;
+    request.port = 443;
+    request.headers = NULL;
+    request.header_count = 0;
+    err = here_tracking_http_get(&client, &request, test_here_tracking_http_recv_ok_cb, NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   here_tracking_http_header_user_agent) == 0))
+        {
+            user_agent_set = true;
+        }
+    }
+
+    ck_assert(!user_agent_set);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_http_get_ok_custom_correlation_id_set)
+{
+    here_tracking_client client;
+    here_tracking_error err;
+    here_tracking_http_request request;
+    here_tracking_http_header header;
+    char* host = "tracking.here.com";
+    char* path = "/index.html";
+    char* my_correlation_id = "my-very-own-correlation-id";
+    uint32_t i;
+    bool correlation_id_set = false;
+
+    test_here_tracking_http_setup(&client);
+    client.user_agent = test_here_tracking_http_user_agent;
+    test_here_tracking_http_tls_read_set_result(fake_send_resp);
+    strcpy(client.access_token, fake_access_token);
+    header.name = "x-request-id";
+    header.value = my_correlation_id;
+    request.host = host;
+    request.path = path;
+    request.port = 443;
+    request.headers = &header;
+    request.header_count = 1;
+    err = here_tracking_http_get(&client, &request, test_here_tracking_http_recv_ok_cb, NULL);
+    ck_assert_int_eq(err, HERE_TRACKING_OK);
+    ck_assert_uint_eq(test_here_tracking_http_recv_data_cb_called, 3);
+
+    for(i = 0; i < here_tracking_tls_writer_write_string_fake.call_count - 1; ++i)
+    {
+        if((strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i],
+                   "x-request-id") == 0) &&
+           (strcmp(here_tracking_tls_writer_write_string_fake.arg1_history[i + 1],
+                   my_correlation_id) == 0))
+        {
+            correlation_id_set = true;
+        }
+    }
+
+    ck_assert(correlation_id_set);
 }
 END_TEST
 
@@ -1364,6 +2070,9 @@ TEST_SUITE_BEGIN(TEST_NAME)
                                      test_here_tracking_http_tc_teardown)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_ok)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_ok_tls_initialized)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_ok_user_agent_set);
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_ok_correlation_id_set);
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_ok_user_agent_empty_string);
     TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_tls_init_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_tls_connect_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_oauth_create_header_fail)
@@ -1379,6 +2088,9 @@ TEST_SUITE_BEGIN(TEST_NAME)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_auth_tls_writer_write_string_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_ok)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_tls_init_fail)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_tls_connect_fail)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_tls_writer_write_string_fail)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_tls_read_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_too_large_to_parse_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_too_small_resp_buffer)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_bad_request)
@@ -1386,7 +2098,13 @@ TEST_SUITE_BEGIN(TEST_NAME)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_forbidden)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_unknown_error_code)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok_user_agent_set)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok_user_agent_empty_string)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok_proto_req)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok_proto_resp)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_tls_init_fail)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_tls_writer_init_fail)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_tls_writer_write_char_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_too_large_to_parse_fail)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_bad_request)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_unauthorized)
@@ -1394,9 +2112,15 @@ TEST_SUITE_BEGIN(TEST_NAME)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_not_found)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_unknown_error_code)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_no_content)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_too_many_requests)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_too_many_requests_no_retry_after)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok_send_multi_chunk)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_send_stream_ok_recv_multi_chunk)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok_user_agent_set)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok_custom_user_agent_set)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok_user_agent_empty_string)
+    TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok_custom_correlation_id_set)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok_with_auth)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_get_ok_with_auth_bearer)
     TEST_SUITE_ADD_TEST(test_here_tracking_http_get_invalid_input)

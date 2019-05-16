@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -32,16 +32,16 @@
 
 #include <stdint.h>
 
-#define HERE_TRACKING_VERSION_MAJOR 1 /**< @brief Major version number */
+#define HERE_TRACKING_VERSION_MAJOR 2 /**< @brief Major version number */
 
-#define HERE_TRACKING_VERSION_MINOR 1 /**< @brief Minor version number */
+#define HERE_TRACKING_VERSION_MINOR 0 /**< @brief Minor version number */
 
-#define HERE_TRACKING_VERSION_PATCH 2 /**< @brief Patch version number */
+#define HERE_TRACKING_VERSION_PATCH 0 /**< @brief Patch version number */
 
 /**
  * @brief Version string in format "Major.Minor.Patch".
  */
-#define HERE_TRACKING_VERSION_STRING "1.1.2"
+#define HERE_TRACKING_VERSION_STRING "2.0.0"
 
 /**
  * @brief Get major version number

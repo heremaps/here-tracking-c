@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
+ * Copyright (C) 2018 HERE Europe B.V.                                                            *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,32 +22,26 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#ifndef HERE_TRACKING_UTILS_H
-#define HERE_TRACKING_UTILS_H
+#ifndef MOCK_HERE_TRACKING_UUID_GEN_H
+#define MOCK_HERE_TRACKING_UUID_GEN_H
 
-#include <stdbool.h>
-#include <stdint.h>
+#include <fff.h>
+
+#include "here_tracking_uuid_gen.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int32_t here_tracking_utils_atoi(const char* str, size_t n);
+DECLARE_FAKE_VALUE_FUNC2(here_tracking_error, here_tracking_uuid_gen_new, char*, size_t);
 
-uint32_t here_tracking_utils_atou(const char* str, size_t n);
+#define MOCK_HERE_TRACKING_UUID_GEN_FAKE_LIST(FAKE) \
+    FAKE(here_tracking_uuid_gen_new)
 
-bool here_tracking_utils_isalnum(const char c);
-
-bool here_tracking_utils_isalpha(const char c);
-
-bool here_tracking_utils_isdigit(const char c);
-
-int32_t here_tracking_utils_memcasecmp(const uint8_t* b1, const uint8_t* b2, size_t n);
-
-int32_t here_tracking_utils_strcasecmp(const char* s1, const char* s2);
+here_tracking_error mock_here_tracking_uuid_gen_new_custom(char* buf, size_t buf_size);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* HERE_TRACKING_UTILS_H */
+#endif /* MOCK_HERE_TRACKING_UUID_GEN_H */

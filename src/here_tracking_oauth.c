@@ -40,8 +40,6 @@
 static const char* here_tracking_oauth_key =                  "OAuth";
 static const char* here_tracking_oauth_consumer_key_key =     "oauth_consumer_key";
 static const char* here_tracking_oauth_nonce_key =            "oauth_nonce";
-static const char* here_tracking_oauth_realm_key =            "realm";
-static const char* here_tracking_oauth_realm_val =            "IoT";
 static const char* here_tracking_oauth_signature_key =        "oauth_signature";
 static const char* here_tracking_oauth_signature_method_key = "oauth_signature_method";
 static const char* here_tracking_oauth_signature_method_val = "HMAC-SHA256";
@@ -75,8 +73,6 @@ typedef struct
 /**************************************************************************************************/
 
 static here_tracking_error here_tracking_oauth_add_oauth_key(here_tracking_data_buffer* data_buf);
-
-static here_tracking_error here_tracking_oauth_add_realm(here_tracking_data_buffer* data_buf);
 
 static here_tracking_error here_tracking_oauth_add_consumer_key(here_tracking_data_buffer* data_buf,
                                                                 const char* device_id,
@@ -153,7 +149,6 @@ here_tracking_error here_tracking_oauth_create_header(const char* device_id,
 
             TRY((here_tracking_data_buffer_init(&data_buf, out, (*out_size))));
             TRY((here_tracking_oauth_add_oauth_key(&data_buf)));
-            TRY((here_tracking_oauth_add_realm(&data_buf)));
             TRY((here_tracking_oauth_add_consumer_key(&data_buf, device_id, &(params.params[0]))));
             TRY((here_tracking_oauth_add_nonce(&data_buf, &(params.params[1]))));
             TRY((here_tracking_oauth_add_signature_method(&data_buf, &(params.params[2]))));
@@ -188,23 +183,6 @@ static here_tracking_error here_tracking_oauth_add_oauth_key(here_tracking_data_
 
     TRY((here_tracking_data_buffer_add_string(data_buf, here_tracking_oauth_key)));
     TRY((here_tracking_data_buffer_add_char(data_buf, ' ')));
-
-here_tracking_oauth_error:
-    return err;
-}
-
-/**************************************************************************************************/
-
-static here_tracking_error here_tracking_oauth_add_realm(here_tracking_data_buffer* data_buf)
-{
-    here_tracking_error err;
-
-    TRY((here_tracking_data_buffer_add_string(data_buf, here_tracking_oauth_realm_key)));
-    TRY((here_tracking_data_buffer_add_char(data_buf, '=')));
-    TRY((here_tracking_data_buffer_add_char(data_buf, '\"')));
-    TRY((here_tracking_data_buffer_add_string(data_buf, here_tracking_oauth_realm_val)));
-    TRY((here_tracking_data_buffer_add_char(data_buf, '\"')));
-    TRY((here_tracking_data_buffer_add_char(data_buf, ',')));
 
 here_tracking_oauth_error:
     return err;

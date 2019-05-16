@@ -1,5 +1,5 @@
 /**************************************************************************************************
-* Copyright (C) 2017 HERE Europe B.V.                                                             *
+* Copyright (C) 2017-2019 HERE Europe B.V.                                                        *
 * All rights reserved.                                                                            *
 *                                                                                                 *
 * MIT License                                                                                     *
@@ -110,15 +110,8 @@ here_tracking_error here_tracking_tls_init(here_tracking_tls* tls)
             if(res == 0)
             {
                 res = mbedtls_x509_crt_parse(&(tls_ctx->crt_ctx),
-                                    (unsigned char*)here_tracking_tls_cert_verisign_universal_root,
-                                    strlen(here_tracking_tls_cert_verisign_universal_root) + 1);
-            }
-
-            if(res == 0)
-            {
-                res = mbedtls_x509_crt_parse(&(tls_ctx->crt_ctx),
-                                    (unsigned char*)here_tracking_tls_cert_digicert_global_root_g2,
-                                    strlen(here_tracking_tls_cert_digicert_global_root_g2) + 1);
+                                    (unsigned char*)here_tracking_tls_cert_globalsign_root_r3,
+                                    strlen(here_tracking_tls_cert_globalsign_root_r3) + 1);
             }
 
             if(res == 0)

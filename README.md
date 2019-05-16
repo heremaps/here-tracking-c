@@ -48,7 +48,7 @@ To port the library to a new platform, you need to implement the following inter
 The example code below sends data to and receives data from HERE Tracking using the client interface.
 ```
 
-here_tracking_error my_send_cb(uint8_t** data, size_t* data_size, void* user_data)
+here_tracking_error my_send_cb(const uint8_t** data, size_t* data_size, void* user_data)
 {
     /*
      * Set the data buffer to send and it's size:

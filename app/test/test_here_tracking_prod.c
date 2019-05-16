@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -32,6 +32,7 @@
 
 #include "here_tracking.h"
 #include "here_tracking_time.h"
+#include "here_tracking_version.h"
 
 #define TEST_NAME "here_tracking_prod"
 
@@ -45,6 +46,7 @@
 /**************************************************************************************************/
 
 static const char* base_url = "tracking.api.here.com";
+static const char* user_agent = "here-tracking-c-test/"HERE_TRACKING_VERSION_STRING;
 
 /**************************************************************************************************/
 
@@ -99,7 +101,7 @@ static void test_here_tracking_prod_recv_data_cb(here_tracking_error err,
 
 /**************************************************************************************************/
 
-static here_tracking_error test_here_tracking_prod_send_ok_cb(uint8_t** data,
+static here_tracking_error test_here_tracking_prod_send_ok_cb(const uint8_t** data,
                                                               size_t* data_size,
                                                               void* user_data)
 {
@@ -207,6 +209,7 @@ START_TEST(test_here_tracking_prod_send_ok)
                                                  base_url);
 
     ck_assert(res == HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_set_recv_data_cb(&client, test_here_tracking_prod_recv_data_cb, NULL);
     ck_assert(res == HERE_TRACKING_OK);
     res = here_tracking_auth(&client);
@@ -238,6 +241,7 @@ START_TEST(test_here_tracking_prod_adjust_time_diff)
                                                  base_url);
 
     ck_assert(res == HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_set_recv_data_cb(&client, test_here_tracking_prod_recv_data_cb, NULL);
     ck_assert(res == HERE_TRACKING_OK);
     client.srv_time_diff = -600; /* Deliberately set a time diff */
@@ -271,6 +275,7 @@ START_TEST(test_here_tracking_prod_send_ok_no_auth)
                                                  base_url);
 
     ck_assert(res == HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_set_recv_data_cb(&client, test_here_tracking_prod_recv_data_cb, NULL);
     ck_assert(res == HERE_TRACKING_OK);
     test_here_tracking_prod_create_basic_telemetry(data, TEST_DATA_BUFFER_SIZE);
@@ -300,6 +305,7 @@ START_TEST(test_here_tracking_prod_send_ok_expired_token)
                                                  base_url);
 
     ck_assert(res == HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_set_recv_data_cb(&client, test_here_tracking_prod_recv_data_cb, NULL);
     ck_assert(res == HERE_TRACKING_OK);
     test_here_tracking_prod_create_basic_telemetry(data, TEST_DATA_BUFFER_SIZE);
@@ -329,6 +335,49 @@ END_TEST
 
 /**************************************************************************************************/
 
+START_TEST(test_here_tracking_prod_send_ok_expiry_offset_token)
+{
+    here_tracking_client client;
+    char data[TEST_DATA_BUFFER_SIZE];
+    uint32_t token_expires_in = 60, ts;
+    here_tracking_error res = here_tracking_init(&client,
+                                                 HERE_TRACKING_TEST_DEVICE_ID,
+                                                 HERE_TRACKING_TEST_DEVICE_SECRET,
+                                                 base_url);
+
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    client.user_agent = user_agent;
+    res = here_tracking_set_recv_data_cb(&client, test_here_tracking_prod_recv_data_cb, NULL);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    test_here_tracking_prod_create_basic_telemetry(data, TEST_DATA_BUFFER_SIZE);
+    INIT_RECV_CB_DATA;
+    res = here_tracking_send(&client, data, strlen(data), TEST_DATA_BUFFER_SIZE);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_uint_gt(strlen(client.access_token), 0);
+    ck_assert_uint_gt(client.token_expiry, 0);
+    ck_assert_uint_eq(test_here_tracking_prod_recv_data_cb_called, 1);
+    ck_assert_int_eq(test_here_tracking_prod_recv_data_cb_status, HERE_TRACKING_OK);
+    ck_assert_uint_gt(test_here_tracking_prod_recv_data_cb_size, 0);
+    res = here_tracking_get_unixtime(&ts);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    client.token_expiry = ts + token_expires_in;
+    INIT_RECV_CB_DATA;
+    test_here_tracking_prod_create_basic_telemetry(data, TEST_DATA_BUFFER_SIZE);
+    res = here_tracking_send(&client, data, strlen(data), TEST_DATA_BUFFER_SIZE);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_uint_gt(strlen(client.access_token), 0);
+    ck_assert_uint_gt(client.token_expiry, (ts + token_expires_in));
+    ck_assert_uint_eq(test_here_tracking_prod_recv_data_cb_called, 1);
+    ck_assert_int_eq(test_here_tracking_prod_recv_data_cb_status, HERE_TRACKING_OK);
+    ck_assert_uint_gt(test_here_tracking_prod_recv_data_cb_size, 0);
+    here_tracking_free(&client);
+    ck_assert_int_eq(res, HERE_TRACKING_OK);
+    ck_assert_ptr_eq(client.tls, NULL);
+}
+END_TEST
+
+/**************************************************************************************************/
+
 START_TEST(test_here_tracking_prod_send_invalid_data)
 {
     here_tracking_client client;
@@ -339,6 +388,7 @@ START_TEST(test_here_tracking_prod_send_invalid_data)
                                                  base_url);
 
     ck_assert(res == HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_set_recv_data_cb(&client, test_here_tracking_prod_recv_data_cb, NULL);
     ck_assert(res == HERE_TRACKING_OK);
     test_here_tracking_prod_create_invalid_telemetry(data, TEST_DATA_BUFFER_SIZE);
@@ -368,6 +418,7 @@ START_TEST(test_here_tracking_prod_send_stream_ok)
                                                  base_url);
 
     ck_assert(res == HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_auth(&client);
     ck_assert(res == HERE_TRACKING_OK);
     ck_assert(strlen(client.access_token) > 0);
@@ -376,7 +427,8 @@ START_TEST(test_here_tracking_prod_send_stream_ok)
     res = here_tracking_send_stream(&client,
                               test_here_tracking_prod_send_ok_cb,
                               test_here_tracking_prod_recv_ok_cb,
-                              HERE_TRACKING_RESP_WITH_DATA,
+                              HERE_TRACKING_REQ_DATA_JSON,
+                              HERE_TRACKING_RESP_WITH_DATA_JSON,
                               NULL);
     ck_assert(res == HERE_TRACKING_OK);
     ck_assert(test_here_tracking_prod_recv_data_cb_called >= 3);
@@ -400,6 +452,7 @@ START_TEST(test_here_tracking_prod_send_stream_invalid_token)
                                                  base_url);
 
     ck_assert_int_eq(res, HERE_TRACKING_OK);
+    client.user_agent = user_agent;
     res = here_tracking_auth(&client);
     ck_assert_int_eq(res, HERE_TRACKING_OK);
     ck_assert_uint_gt(strlen(client.access_token), 0);
@@ -409,7 +462,8 @@ START_TEST(test_here_tracking_prod_send_stream_invalid_token)
     res = here_tracking_send_stream(&client,
                               test_here_tracking_prod_send_ok_cb,
                               test_here_tracking_prod_recv_error_cb,
-                              HERE_TRACKING_RESP_WITH_DATA,
+                              HERE_TRACKING_REQ_DATA_JSON,
+                              HERE_TRACKING_RESP_WITH_DATA_JSON,
                               NULL);
     ck_assert_int_eq(res, HERE_TRACKING_OK);
     ck_assert_uint_ge(test_here_tracking_prod_recv_data_cb_called, 3);
@@ -433,6 +487,7 @@ Suite* test_here_tracking_prod_suite(void)
     tcase_add_test(tc, test_here_tracking_prod_adjust_time_diff);
     tcase_add_test(tc, test_here_tracking_prod_send_ok_no_auth);
     tcase_add_test(tc, test_here_tracking_prod_send_ok_expired_token);
+    tcase_add_test(tc, test_here_tracking_prod_send_ok_expiry_offset_token);
     tcase_add_test(tc, test_here_tracking_prod_send_invalid_data);
     tcase_add_test(tc, test_here_tracking_prod_send_stream_ok);
     tcase_add_test(tc, test_here_tracking_prod_send_stream_invalid_token);

@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017 HERE Europe B.V.                                                            *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -26,6 +26,7 @@
 
 #include <check.h>
 
+#include "here_tracking_test.h"
 #include "here_tracking_utils.h"
 
 #define TEST_NAME "here_tracking_utils"
@@ -37,11 +38,11 @@ START_TEST(test_here_tracking_utils_memcasecmp_lc)
     static char* t1 = "abcd";
     static char* t2 = "abce";
     int32_t res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t1, strlen(t1));
-    ck_assert(res == 0);
+    ck_assert_int_eq(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t2, strlen(t1));
-    ck_assert(res < 0);
+    ck_assert_int_lt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t2, (uint8_t*)t1, strlen(t2));
-    ck_assert(res > 0);
+    ck_assert_int_gt(res, 0);
 }
 END_TEST
 
@@ -52,11 +53,11 @@ START_TEST(test_here_tracking_utils_memcasecmp_uc)
     static char* t1 = "ABCD";
     static char* t2 = "ABCE";
     int32_t res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t1, strlen(t1));
-    ck_assert(res == 0);
+    ck_assert_int_eq(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t2, strlen(t1));
-    ck_assert(res < 0);
+    ck_assert_int_lt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t2, (uint8_t*)t1, strlen(t2));
-    ck_assert(res > 0);
+    ck_assert_int_gt(res, 0);
 }
 END_TEST
 
@@ -69,23 +70,23 @@ START_TEST(test_here_tracking_utils_memcasecmp_mc)
     static char* t3 = "AbCd";
     static char* t4 = "AcBd";
     int32_t res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t2, strlen(t1));
-    ck_assert(res == 0);
+    ck_assert_int_eq(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t3, strlen(t1));
-    ck_assert(res == 0);
+    ck_assert_int_eq(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t2, (uint8_t*)t3, strlen(t2));
-    ck_assert(res == 0);
+    ck_assert_int_eq(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t1, (uint8_t*)t4, strlen(t1));
-    ck_assert(res < 0);
+    ck_assert_int_lt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t4, (uint8_t*)t1, strlen(t2));
-    ck_assert(res > 0);
+    ck_assert_int_gt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t2, (uint8_t*)t4, strlen(t2));
-    ck_assert(res < 0);
+    ck_assert_int_lt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t4, (uint8_t*)t2, strlen(t2));
-    ck_assert(res > 0);
+    ck_assert_int_gt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t3, (uint8_t*)t4, strlen(t3));
-    ck_assert(res < 0);
+    ck_assert_int_lt(res, 0);
     res = here_tracking_utils_memcasecmp((uint8_t*)t4, (uint8_t*)t3, strlen(t3));
-    ck_assert(res > 0);
+    ck_assert_int_gt(res, 0);
 }
 END_TEST
 
@@ -132,29 +133,75 @@ END_TEST
 
 /**************************************************************************************************/
 
-Suite* test_here_tracking_utils_suite(void)
+START_TEST(test_here_tracking_utils_strcasecmp)
 {
-    Suite* s = suite_create(TEST_NAME);
-    TCase* tc = tcase_create(TEST_NAME);
-    tcase_add_test(tc, test_here_tracking_utils_memcasecmp_lc);
-    tcase_add_test(tc, test_here_tracking_utils_memcasecmp_uc);
-    tcase_add_test(tc, test_here_tracking_utils_memcasecmp_mc);
-    tcase_add_test(tc, test_here_tracking_utils_isalnum);
-    tcase_add_test(tc, test_here_tracking_utils_isalpha);
-    tcase_add_test(tc, test_here_tracking_utils_isdigit);
-    suite_add_tcase(s, tc);
-    return s;
+    static char* str1 = "User-Agent";
+    static char* str2 = "user-agent";
+    static char* str3 = "uSeR-AgEnT";
+    static char* str4 = "UserAgent";
+    ck_assert_int_eq(here_tracking_utils_strcasecmp(str1, str2), 0);
+    ck_assert_int_eq(here_tracking_utils_strcasecmp(str1, str3), 0);
+    ck_assert_int_eq(here_tracking_utils_strcasecmp(str2, str3), 0);
+    ck_assert_int_ne(here_tracking_utils_strcasecmp(str1, str4), 0);
+    ck_assert_int_ne(here_tracking_utils_strcasecmp(str2, str4), 0);
+    ck_assert_int_ne(here_tracking_utils_strcasecmp(str3, str4), 0);
 }
+END_TEST
 
 /**************************************************************************************************/
 
-int main()
+START_TEST(test_here_tracking_utils_atoi)
 {
-    int failed;
-    SRunner* sr = srunner_create(test_here_tracking_utils_suite());
-    srunner_set_xml(sr, TEST_NAME"_test_result.xml");
-    srunner_run_all(sr, CK_VERBOSE);
-    failed = srunner_ntests_failed(sr);
-    srunner_free(sr);
-    return (failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+    static char* str1 = "123456789";
+    static char* str2 = "987654321";
+    static char* str3 = "-123456789";
+    static char* str4 = "ABCDEFG";
+    static char* str5 = "123ABC";
+    ck_assert_uint_eq(here_tracking_utils_atoi(str1, strlen(str1)), 123456789);
+    ck_assert_uint_eq(here_tracking_utils_atoi(str2, strlen(str2)), 987654321);
+    ck_assert_uint_eq(here_tracking_utils_atoi(str3, strlen(str3)), -123456789);
+    ck_assert_uint_eq(here_tracking_utils_atoi(str4, strlen(str4)), 0);
+    ck_assert_uint_eq(here_tracking_utils_atoi(str5, strlen(str5)), 123);
+    ck_assert_uint_eq(here_tracking_utils_atoi(NULL, strlen(str1)), 0);
+    ck_assert_uint_eq(here_tracking_utils_atoi(str3, strlen(str3) - 2), -1234567);
+    ck_assert_uint_eq(here_tracking_utils_atoi(str1, 0), 0);
 }
+END_TEST
+
+/**************************************************************************************************/
+
+START_TEST(test_here_tracking_utils_atou)
+{
+    static char* str1 = "123456789";
+    static char* str2 = "987654321";
+    static char* str3 = "-123456789";
+    static char* str4 = "ABCDEFG";
+    static char* str5 = "123ABC";
+    ck_assert_uint_eq(here_tracking_utils_atou(str1, strlen(str1)), 123456789);
+    ck_assert_uint_eq(here_tracking_utils_atou(str2, strlen(str2)), 987654321);
+    ck_assert_uint_eq(here_tracking_utils_atou(str3, strlen(str3)), 0);
+    ck_assert_uint_eq(here_tracking_utils_atou(str4, strlen(str4)), 0);
+    ck_assert_uint_eq(here_tracking_utils_atou(str5, strlen(str5)), 123);
+    ck_assert_uint_eq(here_tracking_utils_atou(NULL, strlen(str1)), 0);
+    ck_assert_uint_eq(here_tracking_utils_atou(str1, strlen(str1) - 2), 1234567);
+    ck_assert_uint_eq(here_tracking_utils_atou(str1, 0), 0);
+}
+END_TEST
+
+/**************************************************************************************************/
+
+TEST_SUITE_BEGIN(TEST_NAME)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_memcasecmp_lc)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_memcasecmp_uc)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_memcasecmp_mc)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_isalnum)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_isalpha)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_isdigit)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_strcasecmp)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_atoi)
+    TEST_SUITE_ADD_TEST(test_here_tracking_utils_atou)
+TEST_SUITE_END
+
+/**************************************************************************************************/
+
+TEST_MAIN(TEST_NAME)

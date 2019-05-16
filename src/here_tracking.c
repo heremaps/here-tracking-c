@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -30,7 +30,12 @@
 
 /**************************************************************************************************/
 
+/* Update token if about to expire within offset. In seconds. */
+#define HERE_TRACKING_TOKEN_EXPIRY_OFFSET (600)
+
 static here_tracking_error here_tracking_update_token_if_needed(here_tracking_client* client);
+
+static here_tracking_error here_tracking_check_rate_limit(here_tracking_client* client);
 
 /**************************************************************************************************/
 
@@ -56,6 +61,9 @@ here_tracking_error here_tracking_init(here_tracking_client* client,
         client->tls = NULL;
         client->data_cb = NULL;
         client->data_cb_user_data = NULL;
+        client->correlation_id = NULL;
+        client->user_agent = NULL;
+        client->retry_after = 0;
         err = HERE_TRACKING_OK;
     }
 
@@ -130,7 +138,12 @@ here_tracking_error here_tracking_send(here_tracking_client* client,
 
     if(client != NULL && data != NULL && send_size > 0 && recv_size > 0)
     {
-        err = here_tracking_update_token_if_needed(client);
+        err = here_tracking_check_rate_limit(client);
+
+        if(err == HERE_TRACKING_OK)
+        {
+            err = here_tracking_update_token_if_needed(client);
+        }
 
         if(err == HERE_TRACKING_OK)
         {
@@ -146,6 +159,7 @@ here_tracking_error here_tracking_send(here_tracking_client* client,
 here_tracking_error here_tracking_send_stream(here_tracking_client* client,
                                               here_tracking_send_cb send_cb,
                                               here_tracking_recv_cb recv_cb,
+                                              here_tracking_req_type req_type,
                                               here_tracking_resp_type resp_type,
                                               void* user_data)
 {
@@ -153,11 +167,21 @@ here_tracking_error here_tracking_send_stream(here_tracking_client* client,
 
     if(client != NULL && send_cb != NULL && recv_cb != NULL)
     {
-        err = here_tracking_update_token_if_needed(client);
+        err = here_tracking_check_rate_limit(client);
 
         if(err == HERE_TRACKING_OK)
         {
-            err = here_tracking_http_send_stream(client, send_cb, recv_cb, resp_type, user_data);
+            err = here_tracking_update_token_if_needed(client);
+        }
+
+        if(err == HERE_TRACKING_OK)
+        {
+            err = here_tracking_http_send_stream(client,
+                                                 send_cb,
+                                                 recv_cb,
+                                                 req_type,
+                                                 resp_type,
+                                                 user_data);
         }
     }
 
@@ -174,9 +198,27 @@ static here_tracking_error here_tracking_update_token_if_needed(here_tracking_cl
     err = here_tracking_get_unixtime(&ts);
 
     if(err == HERE_TRACKING_OK &&
-       (strlen(client->access_token) == 0 || client->token_expiry < ts))
+       (strlen(client->access_token) == 0 ||
+        client->token_expiry < (ts + HERE_TRACKING_TOKEN_EXPIRY_OFFSET)))
     {
         err = here_tracking_auth(client);
+    }
+
+    return err;
+}
+
+/**************************************************************************************************/
+
+static here_tracking_error here_tracking_check_rate_limit(here_tracking_client* client)
+{
+    here_tracking_error err;
+    uint32_t ts;
+
+    err = here_tracking_get_unixtime(&ts);
+
+    if(err == HERE_TRACKING_OK && client->retry_after > ts)
+    {
+        err = HERE_TRACKING_ERROR_TOO_MANY_REQUESTS;
     }
 
     return err;

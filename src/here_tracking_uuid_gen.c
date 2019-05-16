@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
+ * Copyright (C) 2018 HERE Europe B.V.                                                            *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,107 +22,94 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#include <ctype.h>
-#include <string.h>
+#include <stdlib.h>
 
-#include "here_tracking_utils.h"
+#include "here_tracking_time.h"
+#include "here_tracking_uuid_gen.h"
 
 /**************************************************************************************************/
 
-int32_t here_tracking_utils_atoi(const char* str, size_t n)
-{
-    int32_t val = 0;
+static const char HERE_TRACKING_UUID_GEN_V4  = '4';
 
-    if(str != NULL && n > 0)
+static const char HERE_TRACKING_UUID_GEN_V4_VARIANT_1 = 'a';
+
+static void here_tracking_uuid_gen_add_bytes(char* buf, size_t n);
+
+/**************************************************************************************************/
+
+here_tracking_error here_tracking_uuid_gen_new(char* buf, size_t buf_size)
+{
+    here_tracking_error err = HERE_TRACKING_OK;
+
+    if(buf != NULL)
     {
-        if(*str == '-')
+        uint32_t ts;
+
+        if(buf_size < HERE_TRACKING_UUID_SIZE)
         {
-            /* No checks for range, will overflow if not in int32_t range. */
-            val = -((int32_t)here_tracking_utils_atou(str + 1, n - 1));
+            err = HERE_TRACKING_ERROR_BUFFER_TOO_SMALL;
+        }
+
+        if(err == HERE_TRACKING_OK)
+        {
+            err = here_tracking_get_unixtime(&ts);
+        }
+
+        if(err == HERE_TRACKING_OK)
+        {
+            static uint32_t prev_ts = 0;
+            size_t pos = 0;
+
+            /* Make sure the seed is unique */
+            if(prev_ts >= ts)
+            {
+                ts = ++prev_ts;
+            }
+            else
+            {
+                prev_ts = ts;
+            }
+
+            srand(ts);
+            here_tracking_uuid_gen_add_bytes(buf + pos, 8); pos += 8;
+            buf[pos++] = '-';
+            here_tracking_uuid_gen_add_bytes(buf + pos, 4); pos += 4;
+            buf[pos++] = '-';
+            buf[pos++] = HERE_TRACKING_UUID_GEN_V4;
+            here_tracking_uuid_gen_add_bytes(buf + pos, 3); pos += 3;
+            buf[pos++] = '-';
+            buf[pos++] = HERE_TRACKING_UUID_GEN_V4_VARIANT_1;
+            here_tracking_uuid_gen_add_bytes(buf + pos, 3); pos += 3;
+            buf[pos++] = '-';
+            here_tracking_uuid_gen_add_bytes(buf + pos, 12); pos += 12;
+            buf[pos] = '\0';
+        }
+    }
+    else
+    {
+        err = HERE_TRACKING_ERROR_INVALID_INPUT;
+    }
+
+    return err;
+}
+
+/**************************************************************************************************/
+
+static void here_tracking_uuid_gen_add_bytes(char* buf, size_t n)
+{
+    int i, r;
+
+    for(i = 0; i < n; i++)
+    {
+        r = rand() % 0x10;
+
+        if(r < 10)
+        {
+            buf[i] = r + '0';
         }
         else
         {
-            /* No checks for range, will overflow if not in int32_t range. */
-            val = (int32_t)here_tracking_utils_atou(str, n);
+            buf[i] = r + 'a' - 10;
         }
-    }
-
-    return val;
-}
-
-/**************************************************************************************************/
-
-uint32_t here_tracking_utils_atou(const char* str, size_t n)
-{
-    uint32_t val = 0;
-
-    if(str != NULL && n > 0)
-    {
-        size_t pos = 0;
-
-        /* No checks for range, will overflow if over uint32_t max value */
-        while(here_tracking_utils_isdigit(str[pos]) && pos < n)
-        {
-            val *= 10;
-            val += str[pos] - '0';
-            pos++;
-        }
-    }
-
-    return val;
-}
-
-/**************************************************************************************************/
-
-bool here_tracking_utils_isalnum(const char c)
-{
-    return (here_tracking_utils_isalpha(c) || here_tracking_utils_isdigit(c)) ? true : false;
-}
-
-/**************************************************************************************************/
-
-bool here_tracking_utils_isalpha(const char c)
-{
-    return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) ? true : false;
-}
-
-/**************************************************************************************************/
-
-bool here_tracking_utils_isdigit(const char c)
-{
-    return (c >= '0' && c <= '9') ? true : false;
-}
-
-/**************************************************************************************************/
-
-int32_t here_tracking_utils_memcasecmp(const uint8_t* b1, const uint8_t* b2, size_t n)
-{
-    size_t i;
-
-    for(i = 0; tolower(*b1) == tolower(*b2) && i < n; ++i, ++b1, ++b2) { /* NOP */ }
-
-    if(i == n)
-    {
-        return 0;
-    }
-    else
-    {
-        return (*b1 < *b2) ? -1 : 1;
-    }
-}
-
-/**************************************************************************************************/
-
-int32_t here_tracking_utils_strcasecmp(const char* s1, const char* s2)
-{
-    size_t len = strlen(s1);
-
-    if(len == strlen(s2))
-    {
-        return here_tracking_utils_memcasecmp((const uint8_t*)s1, (const uint8_t*)s2, len);
-    }
-    else
-    {
-        return -1;
     }
 }

@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -73,7 +73,10 @@ typedef enum
     HERE_TRACKING_ERROR_DEVICE_UNCLAIMED  = -10,
 
     /** @brief Requested data/resource was not found */
-    HERE_TRACKING_ERROR_NOT_FOUND         = -11
+    HERE_TRACKING_ERROR_NOT_FOUND         = -11,
+
+    /** @brief Client has made too many requests and is being rate-limited */
+    HERE_TRACKING_ERROR_TOO_MANY_REQUESTS = -12
 } here_tracking_error;
 
 #ifdef __cplusplus

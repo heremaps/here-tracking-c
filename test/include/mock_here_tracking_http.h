@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -42,11 +42,12 @@ DECLARE_FAKE_VALUE_FUNC4(here_tracking_error,
                          uint32_t,
                          uint32_t);
 
-DECLARE_FAKE_VALUE_FUNC5(here_tracking_error,
+DECLARE_FAKE_VALUE_FUNC6(here_tracking_error,
                          here_tracking_http_send_stream,
                          here_tracking_client*,
                          here_tracking_send_cb,
                          here_tracking_recv_cb,
+                         here_tracking_req_type,
                          here_tracking_resp_type,
                          void*);
 
@@ -61,6 +62,8 @@ here_tracking_error mock_here_tracking_http_auth_custom(here_tracking_client* cl
 
 void mock_here_tracking_http_send_set_result_data(const char* data, uint32_t data_size);
 
+void mock_here_tracking_http_set_recv_cb_status(here_tracking_error status);
+
 here_tracking_error mock_here_tracking_http_send_custom(here_tracking_client* client,
                                                         char* data,
                                                         uint32_t send_size,
@@ -69,6 +72,7 @@ here_tracking_error mock_here_tracking_http_send_custom(here_tracking_client* cl
 here_tracking_error mock_here_tracking_http_send_stream_custom(here_tracking_client* client,
                                                                here_tracking_send_cb send_cb,
                                                                here_tracking_recv_cb recv_cb,
+                                                               here_tracking_req_type req_type,
                                                                here_tracking_resp_type resp_type,
                                                                void* user_data);
 

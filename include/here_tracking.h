@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2018 HERE Europe B.V.                                                       *
+ * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -82,20 +82,47 @@ extern "C" {
  */
 #define HERE_TRACKING_DEVICE_SECRET_SIZE 43
 
+
+/**
+ * @brief HERE Tracking request data format
+ */
+typedef enum
+{
+    /**
+     * @brief Data in JSON format
+     */
+    HERE_TRACKING_REQ_DATA_JSON,
+
+    /**
+     * @brief Data in protobuf format
+     */
+    HERE_TRACKING_REQ_DATA_PROTOBUF
+} here_tracking_req_type;
+
 /**
  * @brief HERE Tracking response types for send operation.
  */
 typedef enum
 {
     /**
-     * @brief Receive detailed response data.
+     * @brief Receive detailed response data in JSON format.
      */
     HERE_TRACKING_RESP_WITH_DATA = 0,
 
     /**
+     * @brief Receive detailed response data in JSON format.
+     */
+    HERE_TRACKING_RESP_WITH_DATA_JSON = HERE_TRACKING_RESP_WITH_DATA,
+
+    /**
      * @brief Receive only status code in response and no additional data.
      */
-    HERE_TRACKING_RESP_STATUS_ONLY = 1
+    HERE_TRACKING_RESP_STATUS_ONLY = 1,
+
+    /**
+     * @brief Receive detailed response data in protobuf format.
+     */
+    HERE_TRACKING_RESP_WITH_DATA_PROTOBUF = 2
 } here_tracking_resp_type;
 
 /**
@@ -133,7 +160,7 @@ typedef void (*here_tracking_recv_data_cb)(here_tracking_error err,
  * @return ::HERE_TRACKING_OK in case of success.
  * @return Other error code if error occured while handling the callback.
  */
-typedef here_tracking_error (*here_tracking_send_cb)(uint8_t** data,
+typedef here_tracking_error (*here_tracking_send_cb)(const uint8_t** data,
                                                      size_t* data_size,
                                                      void* user_data);
 
@@ -240,6 +267,16 @@ typedef struct
 
     /** @brief User data to pass back in the data callback. */
     void* data_cb_user_data;
+
+    /** @brief Correlation id set by the user. You must terminate the string with `\0`.*/
+    const char* correlation_id;
+
+    /** @brief User agent set by the user. You must terminate the string with `\0`. */
+    const char* user_agent;
+
+    /** @brief Indicates time when client can make requests again after being rate-limited. */
+    uint32_t retry_after;
+
 } here_tracking_client;
 
 /**
@@ -342,6 +379,7 @@ here_tracking_error here_tracking_send(here_tracking_client* client,
  *                    sending.
  * @param[in] recv_cb Callback function that will be called by the library when response data is
  *                    received from HERE Tracking server.
+ * @param[in] req_type Format of data that will be sent to HERE Tracking server.
  * @param[in] resp_type Response type to use.
  * @param[in] user_data User data to pass back as an argument in send and recv callbacks.
  * @return ::HERE_TRACKING_OK HERE Tracking client has successfully sent the data to HERE Tracking.
@@ -353,6 +391,7 @@ here_tracking_error here_tracking_send(here_tracking_client* client,
 here_tracking_error here_tracking_send_stream(here_tracking_client* client,
                                               here_tracking_send_cb send_cb,
                                               here_tracking_recv_cb recv_cb,
+                                              here_tracking_req_type req_type,
                                               here_tracking_resp_type resp_type,
                                               void* user_data);
 

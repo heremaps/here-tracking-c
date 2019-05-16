@@ -22,9 +22,11 @@ set(TEST_TRACKING_HTTP_SOURCES
     ${CMAKE_SOURCE_DIR}/src/here_tracking_http_parser.c # Not currently mocking HTTP parser
     ${CMAKE_SOURCE_DIR}/src/here_tracking_utils.c
     mocks/mock_here_tracking_data_buffer.c
+    mocks/mock_here_tracking_log.c
     mocks/mock_here_tracking_time.c
     mocks/mock_here_tracking_tls.c
     mocks/mock_here_tracking_tls_writer.c
+    mocks/mock_here_tracking_uuid_gen.c
     test_here_tracking_http.c)
 add_executable(test_here_tracking_http ${TEST_TRACKING_HTTP_SOURCES})
 target_link_libraries(test_here_tracking_http ${CHECK_LDFLAGS})
@@ -65,6 +67,14 @@ set(TEST_TRACKING_UTILS_SOURCES
 add_executable(test_here_tracking_utils ${TEST_TRACKING_UTILS_SOURCES})
 target_link_libraries(test_here_tracking_utils ${CHECK_LDFLAGS})
 add_test(NAME test_here_tracking_utils COMMAND test_here_tracking_utils)
+
+set(TEST_TRACKING_UUID_GEN_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/here_tracking_uuid_gen.c
+    mocks/mock_here_tracking_time.c
+    test_here_tracking_uuid_gen.c)
+add_executable(test_here_tracking_uuid_gen ${TEST_TRACKING_UUID_GEN_SOURCES})
+target_link_libraries(test_here_tracking_uuid_gen ${CHECK_LDFLAGS})
+add_test(NAME test_here_tracking_uuid_gen COMMAND test_here_tracking_uuid_gen)
 
 set(TEST_TRACKING_VERSION_SOURCES
 ${CMAKE_SOURCE_DIR}/src/here_tracking_version.c

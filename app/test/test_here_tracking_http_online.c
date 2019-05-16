@@ -132,7 +132,7 @@ START_TEST(test_here_tracking_http_online_get_not_found)
     here_tracking_error err;
     here_tracking_http_request request;
     char* host = "tracking.api.here.com";
-    char* path = "/this_file_should_not_exist.html";
+    char* path = "/";
     char* header_accept_name = "Accept";
     char* header_accept_value = "*/*";
     here_tracking_http_header header[2];

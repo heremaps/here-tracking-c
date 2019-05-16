@@ -1,5 +1,5 @@
 /**************************************************************************************************
- * Copyright (C) 2017-2019 HERE Europe B.V.                                                       *
+ * Copyright (C) 2018 HERE Europe B.V.                                                            *
  * All rights reserved.                                                                           *
  *                                                                                                *
  * MIT License                                                                                    *
@@ -22,32 +22,42 @@
  * SOFTWARE.                                                                                      *
  **************************************************************************************************/
 
-#ifndef HERE_TRACKING_UTILS_H
-#define HERE_TRACKING_UTILS_H
+#include <string.h>
 
-#include <stdbool.h>
-#include <stdint.h>
+#include "mock_here_tracking_uuid_gen.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+/**************************************************************************************************/
 
-int32_t here_tracking_utils_atoi(const char* str, size_t n);
+static const char* mock_here_tracking_uuid_gen_new_result_default = \
+    "58be8c2c-704b-4e75-a8a2-15be9d7ee353";
+static char* mock_here_tracking_uuid_gen_new_result = NULL;
 
-uint32_t here_tracking_utils_atou(const char* str, size_t n);
+/**************************************************************************************************/
 
-bool here_tracking_utils_isalnum(const char c);
+DEFINE_FAKE_VALUE_FUNC2(here_tracking_error, here_tracking_uuid_gen_new, char*, size_t);
 
-bool here_tracking_utils_isalpha(const char c);
+/**************************************************************************************************/
 
-bool here_tracking_utils_isdigit(const char c);
-
-int32_t here_tracking_utils_memcasecmp(const uint8_t* b1, const uint8_t* b2, size_t n);
-
-int32_t here_tracking_utils_strcasecmp(const char* s1, const char* s2);
-
-#ifdef __cplusplus
+void mock_here_tracking_uuid_gen_new_set_result(char* result)
+{
+    mock_here_tracking_uuid_gen_new_result = result;
 }
-#endif
 
-#endif /* HERE_TRACKING_UTILS_H */
+/**************************************************************************************************/
+
+here_tracking_error mock_here_tracking_uuid_gen_new_custom(char* buf, size_t buf_size)
+{
+    if(here_tracking_uuid_gen_new_fake.return_val == HERE_TRACKING_OK)
+    {
+        if(mock_here_tracking_uuid_gen_new_result == NULL)
+        {
+            strcpy(buf, mock_here_tracking_uuid_gen_new_result_default);
+        }
+        else
+        {
+            strcpy(buf, mock_here_tracking_uuid_gen_new_result);
+        }
+    }
+
+    return here_tracking_uuid_gen_new_fake.return_val;
+}
